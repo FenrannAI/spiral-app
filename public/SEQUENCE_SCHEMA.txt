@@ -4,7 +4,7 @@
 Sequencer Schema for HypnoVis sequences.
 Generates a complete multi-phase animation journey.
 
-type Transition = "linear" | "ease" | "pulse" | "spinBurst" | "fragment";
+type Transition = "linear" | "ease" | "pulse" | "spinBurst" | "fragment" | "inversionPulse";
 
 interface Sequence {
   sequenceTitle: string;            # Name of this sequence journey
@@ -22,6 +22,10 @@ interface Phase {
                                     #   pulse     — overshoots target then settles
                                     #   spinBurst — ease + extra rotation surge
                                     #   fragment  — ease + temporary grid surge overlay
+                                    #   inversionPulse — ease + full-screen inversion that
+                                    #                flashes faster and faster (500ms→50ms)
+                                    #                across the transition, overriding the
+                                    #                normal inversion pulse until it completes
   transitionDuration?: number;      # Transition time in seconds [Default: 2]
 
   # snapshot MUST be a valid JSON-stringified object containing partial
@@ -98,14 +102,27 @@ interface Phase {
 # enable Master Tempo and lock them to a shared BPM so the whole scene pulses on
 # one beat — it is the most effective way to make a sequence feel intentional.
 
+# ── RUNNING A GENERATED SEQUENCE (tell the user) ─────────────────────────────
+# A pasted sequence does NOT auto-play. After importing the JSON, the user must:
+#   1. Open the Sequencer tab.
+#   2. Turn the sequencer on (the enable toggle at the top).
+#   3. Press Play.
+# (The app shows this reminder automatically when a sequence is imported.)
+
 OUTPUT CONSTRAINTS:
 1. Return ONLY a single raw valid JSON object.
 2. Do not wrap in markdown or add explanations.
 3. Fully escape nested JSON strings inside the "snapshot" elements.
-4. Include all 9 required color fields in EVERY phase snapshot.
+4. Snapshots are DELTAS — include a field (colors included) ONLY when it changes
+   from the previous phase (or, for Phase 1, from the app defaults). Omitted
+   colors automatically inherit the previous phase's value; you do NOT need to
+   repeat all 9 colors in every phase.
 5. Use spiralMath to choose the curve formula.
 
 # ── EXAMPLE: Theta-band relaxation journey with audio and mirror eyes ───────
+# Note the DELTA style: Phase 1 omits every color because its palette equals the
+# app defaults; "descend" includes only the 3 colors it actually changes; "mirror"
+# repeats no colors at all (they carry over) and only lists the fields it alters.
 {
   "sequenceTitle": "Mirror Descent",
   "sequencerLoop": true,
@@ -116,7 +133,7 @@ OUTPUT CONSTRAINTS:
       "duration": 12,
       "transitionType": "ease",
       "transitionDuration": 3,
-      "snapshot": "{\"spiralMath\":\"power\",\"arms\":6,\"turns\":2,\"curve\":3,\"rotationSpeed\":0.5,\"direction\":1,\"color1\":\"#ff0055\",\"color2\":\"#00ffcc\",\"color3\":\"#0055ff\",\"textColor\":\"#ffffff\",\"flashColor\":\"#ffffff\",\"centerDotColor\":\"#ffffff\",\"strobeColor1\":\"#ffffff\",\"strobeColor2\":\"#ff0000\",\"strobeColor3\":\"#0000ff\",\"audioEnabled\":true,\"audioVolume\":30,\"audioBeatMode\":\"binaural\",\"audioCarrierFreq\":300,\"audioBeatFreq\":10,\"audioWaveform\":\"sine\"}"
+      "snapshot": "{\"spiralMath\":\"power\",\"arms\":6,\"turns\":2,\"curve\":3,\"rotationSpeed\":0.5,\"direction\":1,\"audioEnabled\":true,\"audioVolume\":30,\"audioBeatMode\":\"binaural\",\"audioCarrierFreq\":300,\"audioBeatFreq\":10,\"audioWaveform\":\"sine\"}"
     },
     {
       "id": "descend",
@@ -124,7 +141,7 @@ OUTPUT CONSTRAINTS:
       "duration": 20,
       "transitionType": "ease",
       "transitionDuration": 8,
-      "snapshot": "{\"spiralMath\":\"log\",\"arms\":6,\"turns\":3,\"curve\":2.5,\"rotationSpeed\":0.25,\"direction\":-1,\"color1\":\"#1a0033\",\"color2\":\"#330066\",\"color3\":\"#000022\",\"textColor\":\"#ffffff\",\"flashColor\":\"#ffffff\",\"centerDotColor\":\"#ffffff\",\"strobeColor1\":\"#ffffff\",\"strobeColor2\":\"#ff0000\",\"strobeColor3\":\"#0000ff\",\"vignetteEnabled\":true,\"vignetteIntensity\":75,\"vignetteSize\":40,\"audioEnabled\":true,\"audioVolume\":35,\"audioBeatMode\":\"binaural\",\"audioCarrierFreq\":220,\"audioBeatFreq\":6,\"audioWaveform\":\"sine\",\"audioDroneEnabled\":true,\"audioDroneInterval\":\"octave\",\"audioDroneLevel\":35,\"audioNoiseEnabled\":true,\"audioNoiseType\":\"brown\",\"audioNoiseLevel\":30,\"audioTremoloRate\":0.25,\"audioTremoloDepth\":20}"
+      "snapshot": "{\"spiralMath\":\"log\",\"turns\":3,\"curve\":2.5,\"rotationSpeed\":0.25,\"direction\":-1,\"color1\":\"#1a0033\",\"color2\":\"#330066\",\"color3\":\"#000022\",\"vignetteEnabled\":true,\"vignetteIntensity\":75,\"vignetteSize\":40,\"audioCarrierFreq\":220,\"audioBeatFreq\":6,\"audioDroneEnabled\":true,\"audioDroneInterval\":\"octave\",\"audioDroneLevel\":35,\"audioNoiseEnabled\":true,\"audioNoiseType\":\"brown\",\"audioNoiseLevel\":30,\"audioTremoloRate\":0.25,\"audioTremoloDepth\":20}"
     },
     {
       "id": "mirror",
@@ -132,7 +149,7 @@ OUTPUT CONSTRAINTS:
       "duration": 30,
       "transitionType": "fragment",
       "transitionDuration": 6,
-      "snapshot": "{\"spiralMath\":\"log\",\"arms\":6,\"turns\":3,\"curve\":2.5,\"rotationSpeed\":0.2,\"direction\":-1,\"color1\":\"#1a0033\",\"color2\":\"#330066\",\"color3\":\"#000022\",\"textColor\":\"#ffffff\",\"flashColor\":\"#ffffff\",\"centerDotColor\":\"#ffffff\",\"strobeColor1\":\"#ffffff\",\"strobeColor2\":\"#ff0000\",\"strobeColor3\":\"#0000ff\",\"fragmentEnabled\":true,\"fragmentDirectionMode\":\"mirror\",\"fragmentPhaseOffset\":120,\"eyeSpread\":50,\"eyeSoftness\":65,\"armTaper\":35,\"vignetteEnabled\":true,\"vignetteIntensity\":80,\"vignetteSize\":35,\"vignetteSoftness\":70,\"audioEnabled\":true,\"audioVolume\":35,\"audioBeatMode\":\"binaural\",\"audioCarrierFreq\":220,\"audioBeatFreq\":6,\"audioWaveform\":\"sine\",\"audioDroneEnabled\":true,\"audioDroneInterval\":\"octave\",\"audioDroneLevel\":35,\"audioNoiseEnabled\":true,\"audioNoiseType\":\"brown\",\"audioNoiseLevel\":30,\"audioTremoloRate\":0.25,\"audioTremoloDepth\":20}"
+      "snapshot": "{\"rotationSpeed\":0.2,\"fragmentEnabled\":true,\"fragmentDirectionMode\":\"mirror\",\"fragmentPhaseOffset\":120,\"eyeSpread\":50,\"eyeSoftness\":65,\"armTaper\":35,\"vignetteIntensity\":80,\"vignetteSize\":35,\"vignetteSoftness\":70}"
     }
   ]
 }

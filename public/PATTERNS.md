@@ -1,10 +1,12 @@
-# HYPNOVIS PATTERNS (Testing Guide)
+# HYPNOVIS PATTERNS (Reference Guide)
 
-> **⚠️ EXPERIMENTAL** — These patterns are for testing and debugging the AI prompting system only. Do not share or encourage AI to use these presets directly.
+> A supplemental reference that demonstrates how individual visual techniques are
+> built. Useful for understanding the system or for seeding an AI prompt — pair it
+> with PRESET_SCHEMA.txt when generating new presets.
 
 ## What Are Patterns?
 
-Patterns are named templates that demonstrate specific visual techniques. They are NOT meant to be used as "presets" (things you load directly). Instead, they serve as:
+Patterns are named templates that demonstrate specific visual techniques. They work best as building blocks rather than finished presets to load directly. They serve as:
 
 1. **Learning references** — See how a technique is achieved mathematically
 2. **Prompt seeds** — Copy a pattern's values, then modify them to create something new

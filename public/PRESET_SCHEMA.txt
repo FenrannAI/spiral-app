@@ -29,7 +29,7 @@ interface Preset {
   mode?: Theme;                     # "Darken" (black bg) or "Lighten" (white bg) [Default: "Darken"]
   arms?: number;                    # 1-30 [Default: 6]
   turns?: number;                   # 0.1-10 [Default: 3]
-  curve?: number;                   # 0.1-5 [Default: 4.5]  (controls density for 'power' & 'log' math)
+  curve?: number;                   # 0.1-10 [Default: 4.5]  (controls density for 'power' & 'log' math)
   width?: number;                   # 1-100 max stroke [Default: 50]
   spiralMath?: SpiralMath;          # spiral curve formula [Default: "log"]
                                     #   power:       r = R·t^curve (classic)

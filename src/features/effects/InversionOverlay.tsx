@@ -113,8 +113,15 @@ export const InversionOverlay: React.FC<{ state: AppState }> = ({ state }) => {
     state.masterTempoBeats,
   ]);
 
-  // Don't mount anything while the feature is off.
-  if (!state.inversionEnabled) return null;
+  // The 'inversionPulse' sequencer transition overrides the normal pulse: while
+  // it runs, transitionInversion holds the grey intensity to force this frame
+  // (0–100), with -1 meaning "no override". Only honored during playback so a
+  // transition interrupted mid-pulse can't leave the overlay stuck on.
+  const override   = state.transitionInversion ?? -1;
+  const inOverride = override >= 0 && state.sequencerPlaying;
+
+  // Don't mount anything while neither the feature nor an override is active.
+  if (!inOverride && !state.inversionEnabled) return null;
 
   // Map 0–100 intensity to a grey hex value for mix-blend-mode:difference.
   // At 100 → #ffffff (full inversion). At 0 → #000000 (no effect).
@@ -123,9 +130,10 @@ export const InversionOverlay: React.FC<{ state: AppState }> = ({ state }) => {
   // (#000000 = identity for `difference`, so no visible effect). Mounting /
   // unmounting a mix-blend-mode layer on every pulse forces the compositor to
   // rebuild its layer, which hitches the entire page — including the canvas.
-  const grey    = Math.round((state.inversionIntensity / 100) * 255);
+  const pct     = inOverride ? override : (active ? state.inversionIntensity : 0);
+  const grey    = Math.round((pct / 100) * 255);
   const greyHex = grey.toString(16).padStart(2, '0');
-  const bgColor = active ? `#${greyHex}${greyHex}${greyHex}` : '#000000';
+  const bgColor = `#${greyHex}${greyHex}${greyHex}`;
 
   return (
     <div

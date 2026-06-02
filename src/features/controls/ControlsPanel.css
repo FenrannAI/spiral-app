@@ -1,10 +1,91 @@
 
 
+/* ── InfoTip: "?" badge + custom popover ─────────────────────────────────── */
+/* Works on desktop (hover) and mobile (tap to focus-within toggle).         */
+.info-tip-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  vertical-align: middle;
+}
+
+.info-tip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  margin-left: 0.35rem;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.12);
+  color: #cbd5e1;
+  font-size: 0.62rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  user-select: none;
+  flex-shrink: 0;
+  transition: background 0.15s, color 0.15s;
+  outline: none;
+}
+.info-tip:hover,
+.info-tip:focus {
+  background: var(--accent-color, #38bdf8);
+  color: #04121b;
+}
+
+/* The popover bubble — hidden by default */
+.info-tip-popover {
+  display: none;
+  position: absolute;
+  left: calc(100% + 6px);
+  top: 50%;
+  transform: translateY(-50%);
+  width: 220px;
+  padding: 0.5rem 0.65rem;
+  background: #1e2530;
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  border-radius: 8px;
+  color: #dbeafe;
+  /* Explicitly reset every inheritable font property so the popover always
+     looks the same regardless of which element the badge is inside.        */
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 0.7rem;
+  font-weight: 400;
+  font-style: normal;
+  letter-spacing: normal;
+  text-transform: none;
+  line-height: 1.5;
+  text-align: left;
+  z-index: 9999;
+  pointer-events: none;
+  white-space: normal;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+}
+
+/* Show on hover (desktop) or when the badge is focused/active (mobile tap) */
+.info-tip-wrap:hover .info-tip-popover,
+.info-tip-wrap:focus-within .info-tip-popover {
+  display: block;
+}
+
+/* Flip to the left when near the right edge of the panel */
+@media (max-width: 360px) {
+  .info-tip-popover {
+    left: auto;
+    right: calc(100% + 6px);
+  }
+}
+
 .controls-panel {
   width: var(--sidebar-width);
   background-color: var(--panel-bg);
   color: #ededed;
+  /* 100dvh tracks the visual viewport (shrinks when mobile browser chrome
+     appears), so the panel always fills exactly the visible area.
+     100vh is the fallback for browsers that don't support dvh yet.       */
   height: 100vh;
+  height: 100dvh;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -145,6 +226,9 @@ kbd {
 
 .controls-groups {
   padding: 1rem;
+  /* Extra bottom padding so the last control group clears the mobile
+     browser's persistent navigation bar (back/forward/tab strip).    */
+  padding-bottom: calc(1rem + env(safe-area-inset-bottom, 0px) + 60px);
   display: flex;
   flex-direction: column;
   gap: 1.25rem;
@@ -481,6 +565,67 @@ kbd {
   background: rgba(255,68,68,0.2);
   border-color: rgba(255,68,68,0.3);
   color: #ff6b6b;
+}
+
+.phase-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding-top: 0.3rem;
+}
+
+.phase-apply-btn {
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.12);
+  color: #ccc;
+  font-size: 0.7rem;
+  padding: 0.3rem 0.6rem;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.phase-apply-btn:hover:not(:disabled) {
+  background: rgba(255,255,255,0.12);
+  border-color: var(--accent-color);
+  color: #fff;
+}
+
+.phase-apply-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+/* Notice shown after importing a preset that contains a sequence */
+.sequence-import-notice {
+  margin-top: 0.6rem;
+  padding: 0.6rem 0.75rem;
+  background: rgba(0, 200, 255, 0.08);
+  border: 1px solid rgba(0, 200, 255, 0.25);
+  border-radius: 8px;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: #bfe9ff;
+  animation: fadeInMsg 0.3s ease-out;
+}
+
+.sequence-import-notice strong {
+  color: #fff;
+}
+
+/* Amber warning shown when the import had extra/multiple JSON blocks */
+.import-warning-notice {
+  margin-top: 0.6rem;
+  padding: 0.5rem 0.7rem;
+  background: rgba(255, 180, 0, 0.08);
+  border: 1px solid rgba(255, 180, 0, 0.35);
+  border-radius: 8px;
+  font-size: 0.74rem;
+  line-height: 1.45;
+  color: #ffd98a;
+  animation: fadeInMsg 0.3s ease-out;
 }
 
 .phase-title-input,

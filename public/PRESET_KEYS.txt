@@ -7,7 +7,7 @@
 # ── Visual: Spiral ──────────────────────────────────────────────────────────
 arms                   · number   · 1 – 30                  · 6           · Visuals
 armTaper               · number   · 0 – 100 (%)             · 0           · Visuals
-curve                  · number   · 0.1 – 5                 · 4.5         · Visuals
+curve                  · number   · 0.1 – 10                · 4.5         · Visuals
 direction              · 1 | -1   ·                         · -1          · Motion (1 outward, -1 inward)
 maxFps                 · number   · 1 – 240                 · 144         · Visuals
 mode                   · enum     · "Darken" | "Lighten"    · "Darken"    · Visuals

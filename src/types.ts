@@ -7,7 +7,7 @@ export type VignetteShape = 'ellipse' | 'circle';
 // Mathematical form of the spiral curve (replaces the render-mode selector in the UI)
 export type SpiralMath = 'power' | 'log' | 'archimedean' | 'fermat';
 
-export type TransitionType = 'linear' | 'ease' | 'pulse' | 'spinBurst' | 'fragment';
+export type TransitionType = 'linear' | 'ease' | 'pulse' | 'spinBurst' | 'fragment' | 'inversionPulse';
 
 // Eyes direction: 'uniform' both spin the same way; 'alternating' opposite ways;
 // 'mirror' opposite spin but mirrored geometry so both still pull in/out together.
@@ -110,12 +110,19 @@ export type AppState = {
   kaleidoscopeSectors: number;
   // Framerate cap
   maxFps: number;
+  // High-quality supersampling (2× offscreen render, downsampled). Device/perf
+  // preference — not saved in presets, not animated by sequences.
+  highQuality: boolean;
   // Inversion Pulse
   inversionEnabled: boolean;
   inversionRate: number;      // seconds between pulse starts [Min: 0.1, Default: 2.0]
   inversionDuration: number;  // seconds the inversion is held [Min: 0.05, Default: 0.08]
   inversionIntensity: number; // 0–100, maps to grey value for mix-blend-mode:difference
   rampInversionSpeed: boolean;// tie pulse rate to master speed ramp
+  // Runtime-only: drives the 'inversionPulse' sequencer transition. -1 = no override
+  // (normal inversion behavior); 0–100 = force the inversion overlay to this grey
+  // intensity this frame, overriding the regular pulse during the transition.
+  transitionInversion: number;
   // Zoom Tunnel
   zoomEnabled: boolean;
   zoomSpeed: number;          // cycles per second 0.1–10
@@ -142,6 +149,9 @@ export type AppState = {
   // Hue Rotation
   hueRotation: number;               // 0–360° base hue offset applied to the spiral canvas
   hueRotateSpeed: number;            // degrees per second for a continuous rolling hue (0 = off)
+  // Center Taper — how sharply arm width thins toward the centre (width exponent).
+  // 0 = full/round core, 100 = thin/pointy core (≈ original linear taper).
+  taperStrength: number;
   // Arm Taper
   armTaper: number;                  // 0–100%: outer fraction of each arm that fades to transparent
   // Cell Falloff (fragmentation blend mode)
@@ -265,10 +275,12 @@ export const initialState: AppState = {
   colorMode: 'default',
   kaleidoscopeSectors: 8,
   maxFps: 144,
+  highQuality: false,
   inversionEnabled: false,
   inversionRate: 2.0,
   inversionDuration: 0.08,
   inversionIntensity: 100,
+  transitionInversion: -1,
   rampInversionSpeed: false,
   zoomEnabled: false,
   zoomSpeed: 0.4,
@@ -292,6 +304,7 @@ export const initialState: AppState = {
   rampFragmentPulse: false,
   hueRotation: 0,
   hueRotateSpeed: 0,
+  taperStrength: 85,
   armTaper: 0,
   cellFalloff: 0,
   eyeSpread: 55,

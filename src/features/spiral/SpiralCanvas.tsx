@@ -58,6 +58,35 @@ function computeSpiralR(
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
+ * computeSpiralDR — d(radius)/dt, the analytic radial derivative of computeSpiralR.
+ * Used to build a stable edge normal near the centre (where finite differences
+ * between sub-pixel-spaced samples go noisy and make the ribbon shimmer).
+ * t is clamped away from 0 for the singular forms (fermat, power with curve<1).
+ * ───────────────────────────────────────────────────────────────────────────── */
+function computeSpiralDR(
+  t: number,
+  radius: number,
+  curve: number,
+  spiralMath: AppState['spiralMath'],
+): number {
+  switch (spiralMath) {
+    case 'log': {
+      const c = Math.max(0.5, curve);
+      return radius * c * Math.exp(c * t) / (Math.exp(c) - 1);
+    }
+    case 'archimedean':
+      return radius;
+    case 'fermat':
+      return radius / (2 * Math.sqrt(Math.max(t, 1e-6)));
+    case 'power':
+    default: {
+      const c = Math.max(0.1, curve);
+      return radius * c * Math.pow(Math.max(t, 1e-9), c - 1);
+    }
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
  * perCellDirection
  * Returns the spin direction for a given cell based on the direction pattern.
  * ───────────────────────────────────────────────────────────────────────────── */
@@ -99,6 +128,10 @@ function drawSpiralArms(
   const MIN_WIDTH = 0.5;
   const armsCount  = Math.max(1, state.arms);
   const steps      = 360;
+  // Width taper exponent from the Center Taper slider (0–100). Maps to
+  // [0.2, 1.0]: 0 → round/full core, ~38 → gentle √ taper, 100 → original
+  // linear taper (pointiest). Higher = more aggressive thinning at the centre.
+  const taperExp = 0.2 + Math.min(100, Math.max(0, state.taperStrength)) / 100 * 0.8;
 
   // Arm taper: fraction (0–1) of the outer arm that fades to transparent.
   // Uses a quadratic ease-in fade so the arm stays bright until the final stretch.
@@ -165,69 +198,83 @@ function drawSpiralArms(
     const w = state.wobble * Math.sin(state.wobblePhase + timeSec * state.wobbleSpeed + t * Math.PI * 8);
     let fa = theta + armOffset + rotation + w;
     if (state.colorMode === 'kaleidoscopic') fa = reflectAngle(fa);
-    const x = cx + r * Math.cos(fa);
-    const y = cy + r * Math.sin(fa);
-    const halfW = Math.max(MIN_WIDTH, strokeWidth * (r / radius)) / 2;
-    return { r, x, y, halfW };
+    const cfa = Math.cos(fa), sfa = Math.sin(fa);
+    const x = cx + r * cfa;
+    const y = cy + r * sfa;
+    // Center taper: width × (r/radius)^taperExp. Larger exponent → arms thin
+    // faster toward the centre (more aggressive, pointier core); smaller →
+    // fuller, rounder core that avoids the sub-pixel hairline ring on small
+    // screens. taperExp is precomputed from state.taperStrength below.
+    const rNorm = radius > 0 ? r / radius : 0;
+    const halfW = Math.max(MIN_WIDTH, strokeWidth * Math.pow(rNorm, taperExp)) / 2;
+    return { r, x, y, halfW, fa, cfa, sfa };
   };
 
-  // ── Filled tapered ribbon (the single active render path) ───────────────────
-  // Precompute an offset ring (left/right edge points) per sample, then fill
-  // quads between consecutive samples. Quads share exact edge vertices and are
-  // nudged to overlap slightly along the arm tangent, so there are no
-  // perpendicular notches and no dark seams. Arm taper / cell falloff are then
-  // applied as a single radial mask (see below). fillStyle reuses the gradient
-  // the caller set on strokeStyle.
+  // Analytic edge normal: rotate the curve's exact tangent dP/dt by 90°. Stable
+  // at any radius — unlike a finite difference between near-coincident samples.
+  // Disabled for kaleidoscopic mode (its angle reflection isn't differentiable);
+  // that path falls back to finite differences.
+  const analyticNormals = state.colorMode !== 'kaleidoscopic';
+  const dThetaDt   = (mirrorArms ? -1 : 1) * state.turns * Math.PI * 2;  // d(theta)/dt
+  const wobbleAmp  = state.wobble * 8 * Math.PI;                         // d(wobble)/dt coefficient
+
+  // ── Filled tapered ribbon (single continuous polygon per arm) ───────────────
+  // Each arm is drawn as ONE filled path: out along the left edge (samples
+  // 0→steps), then back along the right edge (steps→0). Because taper / cell
+  // falloff are applied via the radial mask below, the alpha is constant across
+  // the arm, so the whole thing can be a single fill. This removes every
+  // inter-segment seam — there are no per-quad boundaries that could leak the
+  // background, so the spiral stays solid even where it winds sub-pixel-tight
+  // near the centre (no flickering "spider" lines), and overlapping windings
+  // simply union via nonzero winding. fillStyle reuses the caller's gradient.
   ctx.fillStyle = ctx.strokeStyle;
+  // Under maskTaper (the only path used) segAlpha is constant per arm; sample it
+  // once so a single fill carries the correct mode/base alpha.
+  ctx.globalAlpha = segAlpha(0, 0, baseAlpha);
+  const N = steps + 1;
+  const lxs = new Float64Array(N), lys = new Float64Array(N);
+  const rxs = new Float64Array(N), rys = new Float64Array(N);
   for (let i = 0; i < armsCount; i++) {
     const armOffset = (i / armsCount) * Math.PI * 2;
-    // Build edge points: each is nudged ±OVERLAP along the arm tangent so
-    // consecutive quads overlap by a hair, hiding the anti-aliased seam that
-    // would otherwise let the background show through between sections.
-    const OVERLAP = 0.6; // logical px
-    const N = steps + 1;
-    const lxA = new Float64Array(N), lyA = new Float64Array(N); // "ahead" edge (toward k+1)
-    const rxA = new Float64Array(N), ryA = new Float64Array(N);
-    const lxB = new Float64Array(N), lyB = new Float64Array(N); // "behind" edge (toward k-1)
-    const rxB = new Float64Array(N), ryB = new Float64Array(N);
     let prev = sampleArm(0, armOffset);
     for (let k = 0; k < N; k++) {
       const t = k / steps;
       const cur = sampleArm(t, armOffset);
-      const next = k < steps ? sampleArm((k + 1) / steps, armOffset) : cur;
-      // Tangent from neighbours (central where possible) → unit normal.
-      let dx = next.x - prev.x, dy = next.y - prev.y;
-      const len = Math.hypot(dx, dy) || 1;
-      dx /= len; dy /= len;          // unit tangent
-      const nx = -dy, ny = dx;       // left normal
-      const lX = cur.x + nx * cur.halfW, lY = cur.y + ny * cur.halfW;
-      const rX = cur.x - nx * cur.halfW, rY = cur.y - ny * cur.halfW;
-      const ox = dx * OVERLAP, oy = dy * OVERLAP;
-      lxA[k] = lX + ox; lyA[k] = lY + oy; rxA[k] = rX + ox; ryA[k] = rY + oy;
-      lxB[k] = lX - ox; lyB[k] = lY - oy; rxB[k] = rX - ox; ryB[k] = rY - oy;
+      let nx = 0, ny = 0;
+      if (analyticNormals) {
+        // Tangent = dP/dt, with P = (cx + r·cos fa, cy + r·sin fa):
+        //   dx = r'·cos fa − r·fa'·sin fa ,  dy = r'·sin fa + r·fa'·cos fa
+        const dr = computeSpiralDR(t, radius, state.curve, state.spiralMath);
+        const faPrime = dThetaDt + wobbleAmp * Math.cos(state.wobblePhase + timeSec * state.wobbleSpeed + t * Math.PI * 8);
+        const dx = dr * cur.cfa - cur.r * faPrime * cur.sfa;
+        const dy = dr * cur.sfa + cur.r * faPrime * cur.cfa;
+        const len = Math.hypot(dx, dy);
+        if (len > 1e-9) { nx = -dy / len; ny = dx / len; }
+      }
+      if (nx === 0 && ny === 0) {
+        // Finite-difference fallback (kaleidoscopic mode, or a degenerate tangent).
+        const next = k < steps ? sampleArm((k + 1) / steps, armOffset) : cur;
+        let dx = next.x - prev.x, dy = next.y - prev.y;
+        const len = Math.hypot(dx, dy) || 1;
+        nx = -dy / len; ny = dx / len;
+      }
+      lxs[k] = cur.x + nx * cur.halfW; lys[k] = cur.y + ny * cur.halfW;
+      rxs[k] = cur.x - nx * cur.halfW; rys[k] = cur.y - ny * cur.halfW;
       prev = cur;
     }
-    // Fill quads between consecutive samples. The quad spans from sample k's
-    // "behind" edge to sample k+1's "ahead" edge, so it overlaps both neighbours.
-    for (let k = 0; k < steps; k++) {
-      const t = k / steps;
-      const r0 = computeSpiralR(t, radius, state.curve, state.spiralMath);
-      ctx.globalAlpha = segAlpha(t, r0, baseAlpha);
-      ctx.beginPath();
-      ctx.moveTo(lxB[k], lyB[k]);          // start edge extended backward
-      ctx.lineTo(rxB[k], ryB[k]);
-      ctx.lineTo(rxA[k + 1], ryA[k + 1]);  // end edge extended forward
-      ctx.lineTo(lxA[k + 1], lyA[k + 1]);
-      ctx.closePath();
-      ctx.fill();
-    }
+    ctx.beginPath();
+    ctx.moveTo(lxs[0], lys[0]);
+    for (let k = 1; k < N; k++) ctx.lineTo(lxs[k], lys[k]);      // out along left edge
+    for (let k = N - 1; k >= 0; k--) ctx.lineTo(rxs[k], rys[k]);  // back along right edge
+    ctx.closePath();
+    ctx.fill();
   }
   // ── Taper / falloff via radial mask ─────────────────────────────────────────
   // Apply arm taper + cell falloff as a single destination-in radial gradient
   // instead of per-quad alpha. Because the spiral radius grows monotonically
   // with t, screen-radius uniquely maps to a taper value, so a radial mask is
   // EXACT (not an approximation) — and it leaves the ribbon geometry at full
-  // opacity, so the overlap seams never appear in the faded region.
+  // opacity, so no seams appear in the faded region.
   if (maskTaper && (taper > 0 || falloff > 0)) {
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'destination-in';
@@ -314,7 +361,9 @@ export const SpiralCanvas: React.FC<{ state: AppState }> = ({ state }) => {
 
     const centerX   = logicalWidth  / 2;
     const centerY   = logicalHeight / 2;
-    const maxRadius = Math.sqrt(centerX ** 2 + centerY ** 2);
+    // Extend 5% past the corner so arm tips fully cover canvas edges rather
+    // than clipping just short of them.
+    const maxRadius = Math.sqrt(centerX ** 2 + centerY ** 2) * 1.05;
     const isDarken  = state.mode === 'Darken';
     const bgColor   = isDarken ? '#000000' : '#ffffff';
 
@@ -436,6 +485,19 @@ export const SpiralCanvas: React.FC<{ state: AppState }> = ({ state }) => {
     ctx.imageSmoothingEnabled = true;
     if ('imageSmoothingQuality' in ctx) (ctx as any).imageSmoothingQuality = 'high';
 
+    // High-quality supersampling: render the spiral layer(s) at 2× linear
+    // resolution and let the single composite drawImage downsample it, giving
+    // ~4 samples/pixel of anti-aliasing that smooths the centre crawl. Capped so
+    // the offscreen buffer never exceeds ~5000px on a side — that keeps the full
+    // 2× on common large 1080p screens (the problem case) while protecting 4K /
+    // retina from a runaway buffer. renderScale folds dpr in for the layers.
+    const ssTarget   = state.highQuality ? 2 : 1;
+    const physMaxDim = Math.max(physicalWidth, physicalHeight) || 1;
+    const ss         = Math.max(1, Math.min(ssTarget, 5000 / physMaxDim));
+    const renderScale = dpr * ss;
+    const layerW = Math.round(logicalWidth  * renderScale);
+    const layerH = Math.round(logicalHeight * renderScale);
+
     // Eyes effect is on whenever enabled. (Rhythmic on/off is handled via
     // sequences now — the old auto duty-cycle pulse has been removed.)
     const isFragmented = state.fragmentEnabled;
@@ -475,11 +537,11 @@ export const SpiralCanvas: React.FC<{ state: AppState }> = ({ state }) => {
         const mirrorEye = state.fragmentDirectionMode === 'mirror' && col % 2 === 1;
 
         const oc = offscreenRef.current[col];
-        if (oc.width !== physicalWidth || oc.height !== physicalHeight) {
-          oc.width = physicalWidth; oc.height = physicalHeight;
+        if (oc.width !== layerW || oc.height !== layerH) {
+          oc.width = layerW; oc.height = layerH;
         }
         const oCtx = oc.getContext('2d')!;
-        oCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        oCtx.setTransform(renderScale, 0, 0, renderScale, 0, 0);
         oCtx.imageSmoothingEnabled = true;
         if ('imageSmoothingQuality' in oCtx) (oCtx as any).imageSmoothingQuality = 'high';
         oCtx.globalCompositeOperation = 'source-over';
@@ -524,11 +586,11 @@ export const SpiralCanvas: React.FC<{ state: AppState }> = ({ state }) => {
       // composite ops (no lighten/darken perf hit).
       let layer = flatLayerRef.current;
       if (!layer) { layer = document.createElement('canvas'); flatLayerRef.current = layer; }
-      if (layer.width !== physicalWidth || layer.height !== physicalHeight) {
-        layer.width = physicalWidth; layer.height = physicalHeight;
+      if (layer.width !== layerW || layer.height !== layerH) {
+        layer.width = layerW; layer.height = layerH;
       }
       const lCtx = layer.getContext('2d')!;
-      lCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      lCtx.setTransform(renderScale, 0, 0, renderScale, 0, 0);
       lCtx.clearRect(0, 0, logicalWidth, logicalHeight);
       lCtx.globalCompositeOperation = 'source-over';
       lCtx.imageSmoothingEnabled = true;

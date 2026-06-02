@@ -21,9 +21,20 @@ interface Props {
 
 /* ── Slider with inline numeric input ───────────────────────── */
 
-const Slider = ({ label, value, min, max, step, onChange, unit = "" }: {
+/* ── Small "?" badge with a custom popover tooltip ───────────────────────────
+ * Uses CSS :hover for desktop and a click-toggle for mobile (where `title`
+ * is silently ignored by touch browsers). The popover is rendered via a
+ * CSS sibling selector so no JS state is needed.                            */
+const InfoTip = ({ text }: { text: string }) => (
+  <span className="info-tip-wrap">
+    <span className="info-tip" role="button" tabIndex={0} aria-label={text}>?</span>
+    <span className="info-tip-popover">{text}</span>
+  </span>
+);
+
+const Slider = ({ label, value, min, max, step, onChange, unit = "", info }: {
   label: string; value: number; min: number; max: number;
-  step: number; onChange: (v: number) => void; unit?: string;
+  step: number; onChange: (v: number) => void; unit?: string; info?: string;
 }) => {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
@@ -39,7 +50,7 @@ const Slider = ({ label, value, min, max, step, onChange, unit = "" }: {
   return (
     <div className="control-item">
       <div className="control-item-header">
-        <span>{label}</span>
+        <span>{label}{info && <InfoTip text={info} />}</span>
         <div className="slider-num-wrap">
           <input
             type="number"
@@ -73,9 +84,12 @@ const GroupTitle = ({
   title,
   onReset,
   color,
-}: { title: string; onReset?: () => void; color?: string }) => (
+  info,
+}: { title: string; onReset?: () => void; color?: string; info?: string }) => (
   <div className="control-group-title-row">
-    <span className="control-group-title" style={color ? { color } : undefined}>{title}</span>
+    <span className="control-group-title" style={color ? { color } : undefined}>
+      {title}{info && <InfoTip text={info} />}
+    </span>
     {onReset && (
       <button
         className="group-reset-btn"
@@ -103,6 +117,7 @@ const transitionOptions: { value: SequencePhase['transitionType']; label: string
   { value: 'pulse',     label: 'Pulse (Overshoot)',  desc: 'Overshoots target then settles back.' },
   { value: 'spinBurst', label: 'Spin Burst',         desc: 'Accelerated spin at midpoint of transition.' },
   { value: 'fragment',  label: 'Fragment Burst',     desc: 'Spiral splits into a grid and rejoins at the endpoint.' },
+  { value: 'inversionPulse', label: 'Inversion Pulse', desc: 'Full-screen inversion flashes faster and faster (500ms → 50ms) across the transition, overriding the normal pulse.' },
 ];
 
 /* ── Keyboard shortcut help ─────────────────────────────────── */
@@ -133,6 +148,8 @@ function makeReset(keys: (keyof AppState)[], updateState: (p: Partial<AppState>)
 const EXPORT_SKIP = new Set<keyof AppState>([
   'sequencerPlaying',
   'rampEpoch',
+  'transitionInversion',
+  'highQuality',
   'debugEnabled',
   'textBg',
   'spiralRenderMode',
@@ -147,12 +164,48 @@ const SEQUENCER_FIELDS = new Set<keyof AppState>([
   'sequenceTitle', 'sequencePhases',
 ]);
 
+/** Public docs served from /public, viewable & downloadable in the Data tab. */
+const REFERENCE_DOCS = ['PRESET_KEYS.txt', 'PRESET_SCHEMA.txt', 'PRESET_TEMPLATE.json', 'SEQUENCE_SCHEMA.txt'] as const;
+const SKILL_DOCS     = ['SKILLv0.1.md', 'skillschemaV0.1.md'] as const;
+/** Resolve a public-folder path under the app's base URL (works in dev '/' and on
+ *  GitHub Pages '/spiral-app/'). Encode in case a filename has spaces. */
+const docUrl = (filename: string) => `${import.meta.env.BASE_URL}${encodeURIComponent(filename)}`;
+
+/**
+ * Extract every top-level JSON object ({...}) from arbitrary text, ignoring any
+ * braces or quotes that live inside JSON string literals (so escaped snapshot
+ * strings inside a sequence are never miscounted). Returns each object's raw
+ * source slice in order, so the caller can take the first and detect extras.
+ */
+function extractJsonObjects(text: string): string[] {
+  const objects: string[] = [];
+  let depth = 0, start = -1, inStr = false, esc = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === '\\') esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') { inStr = true; continue; }
+    if (ch === '{') { if (depth === 0) start = i; depth++; }
+    else if (ch === '}' && depth > 0) {
+      depth--;
+      if (depth === 0 && start >= 0) { objects.push(text.slice(start, i + 1)); start = -1; }
+    }
+  }
+  return objects;
+}
+
 /* ── Main component ─────────────────────────────────────────── */
 
 export const ControlsPanel: React.FC<Props> = ({ state, updateState, isOpen, toggle, currentPhaseIdx }) => {
   const [activeTab, setActiveTab] = useState<'settings' | 'sequencer' | 'data' | 'debug'>('settings');
   const [importText, setImportText] = useState('');
   const [importStatus, setImportStatus] = useState<'idle' | 'success' | 'error'>('idle');
+  const [importHadSequence, setImportHadSequence] = useState(false);
+  const [importWarning, setImportWarning] = useState<string | null>(null);
   const [copyFeedback, setCopyFeedback] = useState(false);
   const [copyDeltaFeedback, setCopyDeltaFeedback] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
@@ -189,12 +242,41 @@ export const ControlsPanel: React.FC<Props> = ({ state, updateState, isOpen, tog
     return delta;
   };
 
-  const handleCopyDelta = () => {
-    const text = JSON.stringify(buildExportDelta());
-    navigator.clipboard.writeText(text).then(() => {
+  // Robust clipboard copy: prefer the async Clipboard API, fall back to a
+  // hidden-textarea + execCommand for browsers/contexts where it's blocked.
+  // Returns true only if the copy actually succeeded.
+  const copyToClipboard = async (text: string): Promise<boolean> => {
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch { /* fall through to legacy path */ }
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.top = '0';
+      ta.style.left = '0';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      ta.setSelectionRange(0, text.length);
+      const ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      return ok;
+    } catch {
+      return false;
+    }
+  };
+
+  const handleCopyDelta = async () => {
+    if (await copyToClipboard(JSON.stringify(buildExportDelta()))) {
       setCopyDeltaFeedback(true);
       setTimeout(() => setCopyDeltaFeedback(false), 2000);
-    }).catch(() => {});
+    }
   };
 
   const [docViewer, setDocViewer] = useState<string | null>(null);
@@ -218,45 +300,115 @@ export const ControlsPanel: React.FC<Props> = ({ state, updateState, isOpen, tog
 
   const exportString = JSON.stringify(buildExportDelta(), null, 2);
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(exportString).then(() => {
+  const handleCopy = async () => {
+    if (await copyToClipboard(exportString)) {
       setCopyFeedback(true);
       setTimeout(() => setCopyFeedback(false), 1500);
-    }).catch(() => {
-      // Fallback for browsers that block clipboard outside a user gesture
-      const textarea = document.getElementById('preset-export') as HTMLTextAreaElement;
-      if (textarea) {
-        textarea.select();
-        textarea.setSelectionRange(0, 99999);
-        document.execCommand('copy');
-      }
-    });
+    }
   };
 
   const handleImport = () => {
-    if (!importText.trim()) { setImportStatus('error'); return; }
+    if (!importText.trim()) { setImportStatus('error'); setImportWarning(null); return; }
     try {
-      const json = JSON.parse(importText.trim());
-      if (typeof json !== 'object' || json === null || Array.isArray(json)) {
-        setImportStatus('error'); return;
-      }
-      if (Array.isArray(json.sequencePhases) && json.sequencePhases.length > 0) {
-        const firstPhase = json.sequencePhases[0];
+      // Strip any surrounding prose/markdown and pull out the JSON object(s).
+      // Keep only blocks that actually parse to a plain object, so stray braces
+      // in prose (e.g. "{placeholder}") don't shadow the real preset.
+      const parsed = extractJsonObjects(importText)
+        .map(src => { try { return JSON.parse(src); } catch { return undefined; } })
+        .filter((o): o is Record<string, unknown> =>
+          typeof o === 'object' && o !== null && !Array.isArray(o));
+      if (parsed.length === 0) { setImportStatus('error'); setImportWarning(null); return; }
+
+      const json = parsed[0] as Partial<AppState>;
+      const phases = (json as { sequencePhases?: unknown }).sequencePhases;
+      const hasSequence = Array.isArray(phases) && phases.length > 0;
+      if (hasSequence) {
+        const firstPhase = (phases as Array<{ snapshot?: unknown }>)[0];
         if (typeof firstPhase?.snapshot !== 'string') throw new Error('Phase 1 missing snapshot.');
         JSON.parse(firstPhase.snapshot); // validate it's parseable JSON
       }
       updateState({ ...initialState, ...json });
       setImportStatus('success');
+      setImportHadSequence(hasSequence);
+      setImportWarning(
+        parsed.length > 1
+          ? `Found ${parsed.length} JSON blocks — loaded only the first one.`
+          : null,
+      );
       setImportText('');
       setTimeout(() => setImportStatus('idle'), 2500);
     } catch {
       setImportStatus('error');
+      setImportWarning(null);
     }
   };
 
   const handleReset = () => {
     if (confirm('Reset ALL settings to defaults?')) updateState(initialState);
   };
+
+  /* ── Reference / skill document helpers ───────────────────── */
+
+  // Trigger browser downloads for a list of public-folder files.
+  const downloadFiles = async (files: readonly string[]) => {
+    for (const filename of files) {
+      try {
+        const res = await fetch(docUrl(filename));
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      } catch { /* skip failed files */ }
+    }
+  };
+
+  // Toggle the inline viewer for a single document.
+  const viewDoc = async (filename: string) => {
+    if (docViewer === filename) { setDocViewer(null); return; }
+    try {
+      const res = await fetch(docUrl(filename));
+      setDocContent(await res.text());
+      setDocViewer(filename);
+    } catch {
+      setDocContent(`Failed to load ${filename}.`);
+      setDocViewer(filename);
+    }
+  };
+
+  const docKind = (filename: string) =>
+    filename.endsWith('.json') ? 'JSON' : filename.endsWith('.md') ? 'MD' : 'TEXT';
+
+  // Render a single collapsible view button + its content pane.
+  const renderDocItem = (filename: string) => (
+    <div key={filename} style={{ marginBottom: '0.6rem' }}>
+      <button
+        className="action-btn secondary"
+        style={{ width: '100%', fontSize: '0.8rem' }}
+        onClick={() => viewDoc(filename)}
+      >
+        {docViewer === filename ? `▲ Hide ${filename}` : `▼ View ${filename}`}
+        <span style={{ marginLeft: 'auto', fontSize: '0.7rem', color: '#888' }}>{docKind(filename)}</span>
+      </button>
+      {docViewer === filename && (
+        <div style={{ marginTop: '0.5rem', position: 'relative' }}>
+          <button
+            className="phase-btn"
+            style={{ position: 'absolute', top: '0.4rem', right: '0.4rem', zIndex: 2, background: '#1a1a1b', border: '1px solid #444' }}
+            onClick={() => copyToClipboard(docContent)}
+            title="Copy to clipboard"
+          >📋 Copy</button>
+          <pre className="doc-viewer-pre" style={{ background: '#0a0a0b', border: '1px solid #333', borderRadius: '8px', padding: '0.75rem', maxHeight: '320px', overflow: 'auto', fontSize: '0.72rem', fontFamily: "'JetBrains Mono', 'Fira Code', monospace", color: '#aaf', lineHeight: '1.6', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+            <code>{docContent}</code>
+          </pre>
+        </div>
+      )}
+    </div>
+  );
 
   /* ── Sequencer helpers ────────────────────────────────────── */
 
@@ -327,7 +479,29 @@ export const ControlsPanel: React.FC<Props> = ({ state, updateState, isOpen, tog
     updateState({ sequencePhases: phases });
   };
 
+  /**
+   * Apply a phase's fully-expanded look to the live state so the canvas shows
+   * exactly what that phase renders. Layers every delta from phase 0 through
+   * `index` onto initialState, then applies only the visual fields — sequencer
+   * metadata (phases, title, enabled, loop) is preserved untouched.
+   */
+  const handleApplyPhase = (index: number) => {
+    let merged: AppState = initialState;
+    for (let i = 0; i <= index; i++) {
+      try {
+        merged = { ...merged, ...(JSON.parse(state.sequencePhases[i].snapshot) as Partial<AppState>) };
+      } catch { /* malformed phase — skip */ }
+    }
+    const update: Partial<AppState> = {};
+    (Object.keys(merged) as (keyof AppState)[]).forEach(key => {
+      if (EXPORT_SKIP.has(key) || SEQUENCER_FIELDS.has(key)) return;
+      (update as Record<string, unknown>)[key] = merged[key];
+    });
+    updateState(update);
+  };
+
   const handlePlaySequence = () => {
+    if (!state.sequencerPlaying) setImportHadSequence(false);
     updateState({ sequencerPlaying: !state.sequencerPlaying });
   };
 
@@ -342,7 +516,7 @@ export const ControlsPanel: React.FC<Props> = ({ state, updateState, isOpen, tog
 
   /* ── Per-group resets ─────────────────────────────────────── */
 
-  const resetVisuals    = makeReset(['mode','arms','turns','curve','width','spiralMath','maxFps','armTaper','cellFalloff'], updateState);
+  const resetVisuals    = makeReset(['mode','arms','turns','curve','width','spiralMath','maxFps','taperStrength','armTaper','cellFalloff'], updateState);
   const resetCenterDot  = makeReset(['centerDotEnabled','centerDotRadius','centerDotColor'], updateState);
   const resetMotion     = makeReset(['rotationSpeed','direction','wobble','wobblePhase','wobbleSpeed'], updateState);
   const resetZoom       = makeReset(['zoomEnabled','zoomSpeed','zoomDirection','zoomMin','zoomMax','zoomEasing','zoomMode','rampZoomSpeed'], updateState);
@@ -532,14 +706,11 @@ export const ControlsPanel: React.FC<Props> = ({ state, updateState, isOpen, tog
         {activeTab === 'sequencer' ? (
           <>
             <div className="control-group">
-              <GroupTitle title="Sequencer" />
+              <GroupTitle title="Sequencer" info="Build a sequence of parameter keyframes. Each phase captures the current Controls settings." />
               <label className="checkbox-item">
                 <input type="checkbox" checked={state.sequencerEnabled} onChange={e => updateState({ sequencerEnabled: e.target.checked })} />
                 Enable Sequencer
               </label>
-              <p style={{ fontSize: '0.7rem', color: '#999', margin: '0.3rem 0 0 0', lineHeight: '1.4' }}>
-                Build a sequence of parameter keyframes. Each phase captures the current Controls settings.
-              </p>
             </div>
 
             {state.sequencerEnabled && (
@@ -628,8 +799,18 @@ export const ControlsPanel: React.FC<Props> = ({ state, updateState, isOpen, tog
                           />
                           <span>s</span>
                         </div>
-                        <div style={{ fontSize: '0.65rem', color: '#666', padding: '0.3rem 0 0 0', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {phase.snapshot.length} bytes
+                        <div className="phase-card-footer">
+                          <button
+                            className="phase-apply-btn"
+                            onClick={() => handleApplyPhase(i)}
+                            disabled={state.sequencerPlaying}
+                            title="Preview this phase's look — applies all settings up to and including this phase to the live canvas"
+                          >
+                            Set as current view
+                          </button>
+                          <span style={{ fontSize: '0.65rem', color: '#666', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {phase.snapshot.length} bytes
+                          </span>
                         </div>
                       </div>
                     ))}
@@ -688,24 +869,18 @@ export const ControlsPanel: React.FC<Props> = ({ state, updateState, isOpen, tog
           <>
             {/* ── Master Tempo ── */}
             <div className="control-group">
-              <GroupTitle title="Master Tempo" onReset={resetMasterTempo} />
-              <div className="control-item">
-                <label className="control-item-header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <input type="checkbox" checked={state.masterTempoEnabled}
-                    onChange={e => updateState({ masterTempoEnabled: e.target.checked })} />
-                  Enable Master Tempo
-                  {state.masterTempoEnabled && (
-                    <span
-                      className="beat-panel-indicator"
-                      style={{ animationDuration: `${60 / state.masterTempoBpm}s` }}
-                    />
-                  )}
-                </label>
-                <p className="control-description">
-                  Single BPM clock that all locked effects follow in sync.
-                  Converts HypnoViz from independent layers into one coherent pulse.
-                </p>
-              </div>
+              <GroupTitle title="Master Tempo" onReset={resetMasterTempo} info="A single BPM clock that all locked effects follow in sync — converts independent layers into one coherent pulse." />
+              <label className="checkbox-item">
+                <input type="checkbox" checked={state.masterTempoEnabled}
+                  onChange={e => updateState({ masterTempoEnabled: e.target.checked })} />
+                Enable Master Tempo
+                {state.masterTempoEnabled && (
+                  <span
+                    className="beat-panel-indicator"
+                    style={{ animationDuration: `${60 / state.masterTempoBpm}s` }}
+                  />
+                )}
+              </label>
 
               {state.masterTempoEnabled && (<>
                 <div className="control-item">
@@ -859,10 +1034,18 @@ export const ControlsPanel: React.FC<Props> = ({ state, updateState, isOpen, tog
               </div>
               <Slider label="Arms"      value={state.arms}   min={1}   max={30}  step={1}   onChange={v => updateState({ arms: v })} />
               <Slider label="Turns"     value={state.turns}  min={0.1} max={10}  step={0.1} onChange={v => updateState({ turns: v })} />
-              <Slider label="Curve"     value={state.curve}  min={0.1} max={5}   step={0.1} onChange={v => updateState({ curve: v })} />
+              <Slider label="Curve"     value={state.curve}  min={0.1} max={10}  step={0.1} onChange={v => updateState({ curve: v })} />
               <Slider label="Thickness" value={state.width}  min={1}   max={100} step={1}   onChange={v => updateState({ width: v })} />
               <div className="control-item">
-                <label className="control-item-header">Spiral Math</label>
+                <label className="control-item-header">
+                  Spiral Math
+                  <InfoTip text={
+                    state.spiralMath === 'power'       ? 'Arms cluster toward the center based on the Curve value. Most versatile.'
+                    : state.spiralMath === 'log'         ? 'Arms grow exponentially — equiangular at every scale, for a seamless fall-in effect. Curve sets the growth rate.'
+                    : state.spiralMath === 'archimedean' ? 'Equal spacing between successive arms — the classic drafting compass spiral. Curve has no effect.'
+                    : 'Arms pack tighter near the outer edge. Creates a dense, organic texture. Curve has no effect.'
+                  } />
+                </label>
                 <select
                   value={state.spiralMath}
                   onChange={e => updateState({ spiralMath: e.target.value as SpiralMath })}
@@ -872,33 +1055,29 @@ export const ControlsPanel: React.FC<Props> = ({ state, updateState, isOpen, tog
                   <option value="archimedean">Archimedean — constant arm spacing</option>
                   <option value="fermat">Fermat — denser arms toward the outside</option>
                 </select>
-                <p style={{ fontSize: '0.7rem', color: '#999', margin: '0.3rem 0 0 0', lineHeight: '1.4' }}>
-                  {state.spiralMath === 'power'       && 'Arms cluster toward the center based on the Curve value. Most versatile.'}
-                  {state.spiralMath === 'log'         && 'Arms grow exponentially — equiangular at every scale. Pairs best with Zoom Tunnel for a seamless fall-in effect. Curve sets the growth rate.'}
-                  {state.spiralMath === 'archimedean' && 'Equal spacing between successive arms — the classic drafting compass spiral. Curve has no effect.'}
-                  {state.spiralMath === 'fermat'      && "Arms pack tighter near the outer edge. Creates a dense, organic texture. Curve has no effect."}
-                </p>
               </div>
               {/* Spiral rendering uses a single filled-ribbon path. The spiralRenderMode
                   field is retained in state for saved-preset compatibility but no longer
                   selects between modes, so there is no UI control for it. */}
               <Slider label="Max FPS"    value={state.maxFps}   min={1}  max={240} step={1}  onChange={v => updateState({ maxFps: v })} />
-              <Slider label="Arm Taper"  value={state.armTaper} min={0}  max={100} step={1} unit="%" onChange={v => updateState({ armTaper: v })} />
-              <p style={{ fontSize: '0.68rem', color: '#666', margin: '-0.25rem 0 0 0', lineHeight: '1.4' }}>
-                Fades out the outermost portion of each arm. Useful in Blend mode to hide arms that cross through the opposite eye.
-              </p>
+              <label className="checkbox-item">
+                <input type="checkbox" checked={state.highQuality} onChange={e => updateState({ highQuality: e.target.checked })} />
+                High Quality (2× supersampling)
+                <InfoTip text="Renders at higher internal resolution to smooth edges and the centre on large screens. Costs GPU/fill-rate — turn off if the framerate drops." />
+              </label>
+              <Slider label="Center Taper" value={state.taperStrength} min={0} max={100} step={1} unit="%" onChange={v => updateState({ taperStrength: v })}
+                info="How sharply arms thin toward the center. Higher = thinner, pointier core (helps on small/mobile screens); lower = fuller, rounder core (looks best on large desktop screens)." />
+              <Slider label="Arm Taper"  value={state.armTaper} min={0}  max={100} step={1} unit="%" onChange={v => updateState({ armTaper: v })}
+                info="Fades out the outermost portion of each arm. Useful with the Eyes effect to hide arms that cross through the opposite eye." />
             </div>
 
             {/* ── Audio ── */}
             <div className="control-group">
-              <GroupTitle title="Audio" onReset={resetAudio} />
+              <GroupTitle title="Audio" onReset={resetAudio} info="Synthesised binaural / isochronic tones, drone, and noise. Headphones recommended for binaural mode." />
               <label className="checkbox-item">
                 <input type="checkbox" checked={state.audioEnabled} onChange={e => updateState({ audioEnabled: e.target.checked })} />
                 Enable Audio
               </label>
-              <p style={{ fontSize: '0.7rem', color: '#888', margin: '0 0 0.5rem 0.25rem', lineHeight: '1.5' }}>
-                Synthesised binaural / isochronic tones, drone, and noise. Headphones recommended for binaural mode.
-              </p>
               {state.audioEnabled && (
                 <>
                   {/* Mood presets */}
@@ -975,10 +1154,8 @@ export const ControlsPanel: React.FC<Props> = ({ state, updateState, isOpen, tog
                       <label className="checkbox-item">
                         <input type="checkbox" checked={state.rampAudioBeat} onChange={e => updateState({ rampAudioBeat: e.target.checked })} />
                         Link Beat to Speed Ramp
+                        <InfoTip text="Lets the speed ramp drive the beat frequency for building tension. Hard-capped at 40 Hz." />
                       </label>
-                      <p style={{ fontSize: '0.68rem', color: '#666', margin: '-0.1rem 0 0.25rem 0.25rem', lineHeight: '1.4' }}>
-                        Lets the speed ramp drive the beat frequency for building tension. Hard-capped at 40 Hz.
-                      </p>
                     </>
                   )}
 
@@ -1027,13 +1204,13 @@ export const ControlsPanel: React.FC<Props> = ({ state, updateState, isOpen, tog
 
                   {/* ── Modulation subsection ── */}
                   <div style={{ height: '1px', background: 'rgba(255,255,255,0.08)', margin: '0.5rem 0' }} />
-                  <p style={{ fontSize: '0.75rem', color: '#888', margin: '0 0 0.25rem 0', fontWeight: 600 }}>Tremolo</p>
+                  <p style={{ fontSize: '0.75rem', color: '#888', margin: '0 0 0.25rem 0', fontWeight: 600 }}>
+                    Tremolo
+                    <InfoTip text="Amplitude modulation across all audio layers. Slow rates (0.2–0.5 Hz) feel like breathing; fast rates (5–8 Hz) feel agitated." />
+                  </p>
                   <Slider label="Rate"  value={state.audioTremoloRate}  min={0} max={10}  step={0.05} unit="Hz" onChange={v => updateState({ audioTremoloRate: v })} />
                   <TempoLockBadge locked={state.lockAudioTremolo} ratio={state.lockAudioTremoloRatio} derivedValue={`${Math.min(10, tempoRateHz(state.masterTempoBpm, state.lockAudioTremoloRatio)).toFixed(2)} Hz`} />
                   <Slider label="Depth" value={state.audioTremoloDepth} min={0} max={100} step={1}    unit="%"  onChange={v => updateState({ audioTremoloDepth: v })} />
-                  <p style={{ fontSize: '0.68rem', color: '#666', margin: '-0.25rem 0 0.25rem 0', lineHeight: '1.4' }}>
-                    Amplitude modulation across all audio layers. Slow rates (0.2–0.5 Hz) feel like breathing; fast rates (5–8 Hz) feel agitated.
-                  </p>
                 </>
               )}
             </div>
@@ -1083,14 +1260,11 @@ export const ControlsPanel: React.FC<Props> = ({ state, updateState, isOpen, tog
 
             {/* ── Eyes ── */}
             <div className="control-group">
-              <GroupTitle title="Eyes" onReset={resetFragment} />
+              <GroupTitle title="Eyes" onReset={resetFragment} info={'Renders two side-by-side spirals — a hypnotic "two eyes" effect. Each eye is confined to its own soft region so they stay distinct while still blending in the middle.'} />
               <label className="checkbox-item">
                 <input type="checkbox" checked={state.fragmentEnabled} onChange={e => updateState({ fragmentEnabled: e.target.checked })} />
                 Enable Eyes
               </label>
-              <p style={{ fontSize: '0.7rem', color: '#999', margin: '0.3rem 0 0.5rem 0.25rem', lineHeight: '1.4' }}>
-                Renders two side-by-side spirals — a hypnotic "two eyes" effect. Each eye is confined to its own soft region so they stay distinct while still blending in the middle.
-              </p>
               {state.fragmentEnabled && (
                 <>
                   <div className="control-item">
@@ -1102,20 +1276,12 @@ export const ControlsPanel: React.FC<Props> = ({ state, updateState, isOpen, tog
                     </select>
                   </div>
 
-                  <Slider label="Phase Offset" value={state.fragmentPhaseOffset} min={0} max={360} step={1} unit="°" onChange={v => updateState({ fragmentPhaseOffset: v })} />
-                  <p style={{ fontSize: '0.68rem', color: '#666', margin: '-0.25rem 0 0.5rem 0', lineHeight: '1.4' }}>
-                    Rotation offset between the two eyes. 0° = synchronized. 180° = maximum conflict.
-                  </p>
-
-                  <Slider label="Eye Spread" value={state.eyeSpread} min={0} max={100} step={1} unit="%" onChange={v => updateState({ eyeSpread: v })} />
-                  <p style={{ fontSize: '0.68rem', color: '#666', margin: '-0.25rem 0 0.5rem 0', lineHeight: '1.4' }}>
-                    How far each eye reaches toward the other. Low = compact, well-separated eyes; high = the eyes overlap more in the middle.
-                  </p>
-
-                  <Slider label="Eye Softness" value={state.eyeSoftness} min={0} max={100} step={1} unit="%" onChange={v => updateState({ eyeSoftness: v })} />
-                  <p style={{ fontSize: '0.68rem', color: '#666', margin: '-0.25rem 0 0.5rem 0', lineHeight: '1.4' }}>
-                    Softness of each eye's edge falloff. Low = crisp circular eyes; high = a gentle gradual fade between them.
-                  </p>
+                  <Slider label="Phase Offset" value={state.fragmentPhaseOffset} min={0} max={360} step={1} unit="°" onChange={v => updateState({ fragmentPhaseOffset: v })}
+                    info="Rotation offset between the two eyes. 0° = synchronized. 180° = maximum conflict." />
+                  <Slider label="Eye Spread" value={state.eyeSpread} min={0} max={100} step={1} unit="%" onChange={v => updateState({ eyeSpread: v })}
+                    info="How far each eye reaches toward the other. Low = compact, well-separated eyes; high = the eyes overlap more in the middle." />
+                  <Slider label="Eye Softness" value={state.eyeSoftness} min={0} max={100} step={1} unit="%" onChange={v => updateState({ eyeSoftness: v })}
+                    info="Softness of each eye's edge falloff. Low = crisp circular eyes; high = a gentle gradual fade between them." />
                 </>
               )}
             </div>
@@ -1124,17 +1290,19 @@ export const ControlsPanel: React.FC<Props> = ({ state, updateState, isOpen, tog
             <div className="control-group">
               <GroupTitle title="Colors" onReset={resetColors} />
               <div className="control-item">
-                <label className="control-item-header">Color Animation Mode</label>
+                <label className="control-item-header">
+                  Color Animation Mode
+                  <InfoTip text={
+                    state.colorMode === 'default' ? 'Colors move along the spiral over time.'
+                    : state.colorMode === 'static' ? 'Each arm segment keeps its color as the spiral rotates, making motion more visible.'
+                    : 'Angles are reflected to create a kaleidoscope pattern.'
+                  } />
+                </label>
                 <select value={state.colorMode} onChange={e => updateState({ colorMode: e.target.value as ColorMode })}>
                   <option value="default">Default (cycling gradient)</option>
                   <option value="static">Static on arm</option>
                   <option value="kaleidoscopic">Kaleidoscopic</option>
                 </select>
-                <p style={{ fontSize: '0.7rem', color: '#999', margin: '0.3rem 0 0 0', lineHeight: '1.4' }}>
-                  {state.colorMode === 'default' && 'Colors move along the spiral over time.'}
-                  {state.colorMode === 'static' && 'Each arm segment keeps its color as the spiral rotates, making motion more visible.'}
-                  {state.colorMode === 'kaleidoscopic' && 'Angles are reflected to create a kaleidoscope pattern.'}
-                </p>
               </div>
               {state.colorMode === 'kaleidoscopic' && (
                 <Slider label="Sectors" value={state.kaleidoscopeSectors} min={1} max={16} step={1} onChange={v => updateState({ kaleidoscopeSectors: v })} />
@@ -1155,11 +1323,9 @@ export const ControlsPanel: React.FC<Props> = ({ state, updateState, isOpen, tog
               <Slider label="Shift Speed"   value={state.colorCyclingSpeed} min={0}   max={20}  step={0.1} onChange={v => updateState({ colorCyclingSpeed: v })} />
               <TempoLockBadge locked={state.lockColorCycling} ratio={state.lockColorCyclingRatio} derivedValue={`${tempoRateHz(state.masterTempoBpm, state.lockColorCyclingRatio).toFixed(2)} cyc/s`} />
               <Slider label="Hue Offset"    value={state.hueRotation}     min={0}    max={360} step={1}    unit="°"    onChange={v => updateState({ hueRotation: v })} />
-              <Slider label="Hue Roll Speed" value={state.hueRotateSpeed} min={-360} max={360} step={1}    unit="°/s"  onChange={v => updateState({ hueRotateSpeed: v })} />
+              <Slider label="Hue Roll Speed" value={state.hueRotateSpeed} min={-360} max={360} step={1}    unit="°/s"  onChange={v => updateState({ hueRotateSpeed: v })}
+                info="Hue Offset shifts all colors without touching the pickers. Roll Speed continuously rotates the hue at a set rate (negative = reverse). Both interpolate during sequencer transitions." />
               <TempoLockBadge locked={state.lockHueRotate} ratio={state.lockHueRotateRatio} derivedValue={`${(tempoRateHz(state.masterTempoBpm, state.lockHueRotateRatio) * 360).toFixed(0)}°/s`} />
-              <p style={{ fontSize: '0.68rem', color: '#666', margin: '-0.25rem 0 0.25rem 0', lineHeight: '1.4' }}>
-                Offset shifts all colors without touching the pickers. Roll Speed continuously rotates the hue at a set rate (negative = reverse). Both interpolate during sequencer transitions.
-              </p>
 
               {/* ── Palette Presets ── */}
               <div style={{ height: '1px', background: 'rgba(255,255,255,0.08)', margin: '0.25rem 0' }} />
@@ -1193,25 +1359,18 @@ export const ControlsPanel: React.FC<Props> = ({ state, updateState, isOpen, tog
 
             {/* ── Vignette ── */}
             <div className="control-group">
-              <GroupTitle title="Vignette" onReset={resetVignette} />
+              <GroupTitle title="Vignette" onReset={resetVignette} info="Darkens the edges of the screen to draw focus toward the spiral center." />
               <label className="checkbox-item">
                 <input type="checkbox" checked={state.vignetteEnabled} onChange={e => updateState({ vignetteEnabled: e.target.checked })} />
                 Enable Vignette
               </label>
-              <p style={{ fontSize: '0.7rem', color: '#888', margin: '0 0 0.5rem 0.25rem', lineHeight: '1.5' }}>
-                Darkens the edges of the screen to draw focus toward the spiral center.
-              </p>
               {state.vignetteEnabled && (
                 <>
                   <Slider label="Intensity"   value={state.vignetteIntensity} min={0} max={100} step={1}  unit="%" onChange={v => updateState({ vignetteIntensity: v })} />
-                  <Slider label="Inner Radius" value={state.vignetteSize}      min={0} max={95}  step={1}  unit="%" onChange={v => updateState({ vignetteSize: v })} />
-                  <p style={{ fontSize: '0.68rem', color: '#666', margin: '-0.25rem 0 0.25rem 0', lineHeight: '1.4' }}>
-                    Inner radius: how far the transparent center extends before fading to the edge color.
-                  </p>
-                  <Slider label="Softness" value={state.vignetteSoftness} min={0} max={100} step={1} unit="%" onChange={v => updateState({ vignetteSoftness: v })} />
-                  <p style={{ fontSize: '0.68rem', color: '#666', margin: '-0.25rem 0 0.25rem 0', lineHeight: '1.4' }}>
-                    Softness: low = a hard ring near the inner radius; high = a smooth, gradual fade across the screen.
-                  </p>
+                  <Slider label="Inner Radius" value={state.vignetteSize}      min={0} max={95}  step={1}  unit="%" onChange={v => updateState({ vignetteSize: v })}
+                    info="How far the transparent center extends before fading to the edge color." />
+                  <Slider label="Softness" value={state.vignetteSoftness} min={0} max={100} step={1} unit="%" onChange={v => updateState({ vignetteSoftness: v })}
+                    info="Low = a hard ring near the inner radius; high = a smooth, gradual fade across the screen." />
                   <div className="control-item">
                     <label className="control-item-header">Shape</label>
                     <select value={state.vignetteShape} onChange={e => updateState({ vignetteShape: e.target.value as VignetteShape })}>
@@ -1276,14 +1435,11 @@ export const ControlsPanel: React.FC<Props> = ({ state, updateState, isOpen, tog
 
             {/* ── Strobe ── */}
             <div className="control-group">
-              <GroupTitle title="Strobe" onReset={resetStrobe} />
+              <GroupTitle title="Strobe" onReset={resetStrobe} info="A free-running strobe independent of the text cycle." />
               <label className="checkbox-item">
                 <input type="checkbox" checked={state.intenseFlash} onChange={e => updateState({ intenseFlash: e.target.checked })} />
                 Enable Independent Strobe
               </label>
-              <p style={{ fontSize: '0.7rem', color: '#888', margin: '0 0 0.5rem 0.25rem', lineHeight: '1.5' }}>
-                A free-running strobe independent of the text cycle.
-              </p>
               {state.intenseFlash && (
                 <>
                   <Slider label="Delay Between" value={state.intenseStrobeDelay} min={5}  max={1000} step={5} unit="ms" onChange={v => updateState({ intenseStrobeDelay: v })} />
@@ -1309,14 +1465,11 @@ export const ControlsPanel: React.FC<Props> = ({ state, updateState, isOpen, tog
 
             {/* ── Inversion Pulse ── */}
             <div className="control-group">
-              <GroupTitle title="Inversion Pulse" onReset={resetInversion} />
+              <GroupTitle title="Inversion Pulse" onReset={resetInversion} info="Briefly inverts all colors beneath the text layer using blend mode. Creates a persistent afterimage in complementary colors." />
               <label className="checkbox-item">
                 <input type="checkbox" checked={state.inversionEnabled} onChange={e => updateState({ inversionEnabled: e.target.checked })} />
                 Enable Inversion Pulse
               </label>
-              <p style={{ fontSize: '0.7rem', color: '#888', margin: '0 0 0.5rem 0.25rem', lineHeight: '1.5' }}>
-                Briefly inverts all colors beneath the text layer using blend mode. Creates a persistent afterimage in complementary colors.
-              </p>
               {state.inversionEnabled && (
                 <>
                   <Slider label="Rate"      value={state.inversionRate}      min={0.1} max={10} step={0.05} unit="s"  onChange={v => updateState({ inversionRate: v })} />
@@ -1333,31 +1486,30 @@ export const ControlsPanel: React.FC<Props> = ({ state, updateState, isOpen, tog
 
             {/* ── Speed Ramp ── */}
             <div className="control-group">
-              <GroupTitle title="Speed Ramp" onReset={resetSpeedRamp} />
+              <GroupTitle title="Speed Ramp" onReset={resetSpeedRamp} info="Periodically accelerates and resets selected parameters for building tension." />
               <label className="checkbox-item">
                 <input type="checkbox" checked={state.pulseSpeed} onChange={e => updateState({ pulseSpeed: e.target.checked })} />
                 Enable Speed Ramping
               </label>
-              <p style={{ fontSize: '0.7rem', color: '#888', margin: '0 0 0.5rem 0.25rem', lineHeight: '1.5' }}>
-                Periodically accelerates and resets selected parameters for building tension.
-              </p>
               {state.pulseSpeed && (
                 <>
                   <div className="control-item">
-                    <label className="control-item-header">Ramp Mode</label>
+                    <label className="control-item-header">
+                      Ramp Mode
+                      <InfoTip text={state.rampMode === 'sawtooth'
+                        ? 'Starts at 100% and increases linearly to the max multiplier, then instantly resets.'
+                        : 'Oscillates smoothly between min and max multipliers using a sine wave.'} />
+                    </label>
                     <select value={state.rampMode} onChange={e => updateState({ rampMode: e.target.value as RampMode })}>
                       <option value="sawtooth">Sawtooth — linear build then snap</option>
                       <option value="legacy">Legacy — smooth sine oscillation</option>
                     </select>
-                    <p style={{ fontSize: '0.7rem', color: '#999', margin: '0.3rem 0 0 0', lineHeight: '1.4' }}>
-                      {state.rampMode === 'sawtooth'
-                        ? 'Starts at 100% and increases linearly to the max multiplier, then instantly resets.'
-                        : 'Oscillates smoothly between min and max multipliers using a sine wave.'}
-                    </p>
                   </div>
 
                   <div style={{ height: '1px', background: 'rgba(255,255,255,0.06)', margin: '0.25rem 0' }} />
-                  <p style={{ fontSize: '0.7rem', color: '#777', margin: '0 0 0.25rem 0' }}>Affect:</p>
+                  <p style={{ fontSize: '0.7rem', color: '#777', margin: '0 0 0.25rem 0' }}>
+                    Affect: <InfoTip text="Select which parameters the ramp multiplier is applied to." />
+                  </p>
                   <label className="checkbox-item">
                     <input type="checkbox" checked={state.rampSpiralSpeed}   onChange={e => updateState({ rampSpiralSpeed: e.target.checked })} />
                     Spiral Spin
@@ -1402,10 +1554,8 @@ export const ControlsPanel: React.FC<Props> = ({ state, updateState, isOpen, tog
               <label className="checkbox-item">
                 <input type="checkbox" checked={state.debugEnabled} onChange={e => updateState({ debugEnabled: e.target.checked })} />
                 Enable Debug Panel
+                <InfoTip text="Shows a real-time debug tab with internal animation values." />
               </label>
-              <p style={{ fontSize: '0.7rem', color: '#999', margin: '0.3rem 0 0 0', lineHeight: '1.4' }}>
-                Shows a real-time debug tab with internal animation values.
-              </p>
             </div>
           </>
 
@@ -1414,11 +1564,10 @@ export const ControlsPanel: React.FC<Props> = ({ state, updateState, isOpen, tog
           <>
             {/* ── Global Clock ── */}
             <div className="control-group">
-              <div className="control-group-title" style={{ color: '#ffaa00' }}>⏱ Global Clock</div>
-              <p style={{ fontSize: '0.7rem', color: '#666', margin: '0 0 0.6rem 0', lineHeight: '1.4' }}>
-                Monotonic session timer. Starts on first animation frame, never resets.
-                Foundation for future cross-system sync.
-              </p>
+              <div className="control-group-title" style={{ color: '#ffaa00' }}>
+                ⏱ Global Clock
+                <InfoTip text="Monotonic session timer. Starts on first animation frame, never resets." />
+              </div>
               <div style={{ background: 'rgba(0,0,0,0.4)', borderRadius: '10px', padding: '0.75rem', textAlign: 'center', marginBottom: '0.5rem' }}>
                 <div style={{ fontFamily: "'JetBrains Mono','Fira Code',monospace", fontSize: '1.6rem', color: '#ffdd57', letterSpacing: '0.06em', lineHeight: 1 }}>
                   {formatClock(debugValues.sessionTime)}
@@ -1529,10 +1678,10 @@ export const ControlsPanel: React.FC<Props> = ({ state, updateState, isOpen, tog
         ) : (
           <>
             <div className="control-group">
-              <div className="control-group-title">Export Preset</div>
-              <p style={{ fontSize: '0.8rem', color: '#999', margin: '0 0 0.75rem 0', lineHeight: '1.5' }}>
-                Only fields that differ from defaults are included, keeping the output compact and AI-friendly. Paste into any HypnoViz instance to restore.
-              </p>
+              <div className="control-group-title">
+                Export Preset
+                <InfoTip text="Only fields that differ from defaults are included, keeping output compact and AI-friendly. Paste into any HypnoVis instance to restore." />
+              </div>
               <div className="preset-export-row">
                 <textarea
                   id="preset-export"
@@ -1552,14 +1701,14 @@ export const ControlsPanel: React.FC<Props> = ({ state, updateState, isOpen, tog
             </div>
 
             <div className="control-group">
-              <div className="control-group-title">Import Preset</div>
-              <p style={{ fontSize: '0.8rem', color: '#999', margin: '0 0 0.75rem 0', lineHeight: '1.5' }}>
-                Paste a preset string below and click Apply to load it.
-              </p>
+              <div className="control-group-title">
+                Import Preset
+                <InfoTip text="Paste a preset or sequence and click Apply. Surrounding text is fine — JSON is extracted automatically. If several blocks are pasted, the first is used." />
+              </div>
               <div className="preset-import-row">
                 <textarea
                   value={importText}
-                  onChange={e => { setImportText(e.target.value); setImportStatus('idle'); }}
+                  onChange={e => { setImportText(e.target.value); setImportStatus('idle'); setImportHadSequence(false); setImportWarning(null); }}
                   placeholder='{"mode":"Darken","arms":8,...}'
                   style={{ width: '100%', background: '#0a0a0b', border: importStatus === 'error' ? '1px solid #ff4444' : '1px solid #333', color: '#aaf', padding: '0.75rem', borderRadius: '8px', fontFamily: "'JetBrains Mono', 'Fira Code', monospace", fontSize: '0.72rem', resize: 'none', outline: 'none', height: '80px', lineHeight: '1.6' }}
                 />
@@ -1569,76 +1718,49 @@ export const ControlsPanel: React.FC<Props> = ({ state, updateState, isOpen, tog
                     Apply Preset
                   </button>
                   {importStatus === 'success' && <span className="status-msg success">✓ Preset loaded!</span>}
-                  {importStatus === 'error'   && <span className="status-msg error">✗ Invalid string</span>}
+                  {importStatus === 'error'   && <span className="status-msg error">✗ No valid JSON found</span>}
                 </div>
+                {importWarning && (
+                  <div className="import-warning-notice">⚠ {importWarning}</div>
+                )}
+                {importHadSequence && (
+                  <div className="sequence-import-notice">
+                    <strong>This preset includes a sequence.</strong> Open the{' '}
+                    <strong>Sequencer</strong> tab, turn it on, and press{' '}
+                    <strong>Play</strong> to run it.
+                  </div>
+                )}
               </div>
             </div>
 
             <div className="control-group">
-              <div className="control-group-title" style={{ color: '#4ade80' }}>📋 Reference Documents</div>
-              <p style={{ fontSize: '0.78rem', color: '#999', margin: '0 0 0.75rem 0', lineHeight: '1.5' }}>
-                Open these guides to copy their contents and paste into an AI prompt for custom preset generation.
-              </p>
+              <div className="control-group-title" style={{ color: '#4ade80' }}>
+                📋 Reference Documents
+                <InfoTip text="Open these guides to copy their contents and paste into an AI prompt for custom preset generation." />
+              </div>
               <button
                 className="action-btn secondary"
                 style={{ width: '100%', marginBottom: '0.75rem' }}
-                onClick={async () => {
-                  const files = ['PRESET_KEYS.txt', 'PRESET_SCHEMA.txt', 'PRESET_TEMPLATE.json', 'SEQUENCE_SCHEMA.txt'];
-                  for (const filename of files) {
-                    try {
-                      const res = await fetch(`/${filename}`);
-                      const blob = await res.blob();
-                      const url = URL.createObjectURL(blob);
-                      const a = document.createElement('a');
-                      a.href = url;
-                      a.download = filename;
-                      document.body.appendChild(a);
-                      a.click();
-                      document.body.removeChild(a);
-                      URL.revokeObjectURL(url);
-                    } catch { /* skip failed files */ }
-                  }
-                }}
+                onClick={() => downloadFiles(REFERENCE_DOCS)}
               >
                 ⬇ Download All Reference Docs
               </button>
-              {(['PRESET_KEYS.txt', 'PRESET_SCHEMA.txt', 'PRESET_TEMPLATE.json', 'SEQUENCE_SCHEMA.txt'] as const).map(filename => (
-                <div key={filename} style={{ marginBottom: '0.6rem' }}>
-                  <button
-                    className="action-btn secondary"
-                    style={{ width: '100%', fontSize: '0.8rem' }}
-                    onClick={async () => {
-                      if (docViewer === filename) { setDocViewer(null); return; }
-                      try {
-                        const res = await fetch(`/${filename}`);
-                        setDocContent(await res.text());
-                        setDocViewer(filename);
-                      } catch {
-                        setDocContent(`Failed to load ${filename}.`);
-                        setDocViewer(filename);
-                      }
-                    }}
-                  >
-                    {docViewer === filename ? `▲ Hide ${filename}` : `▼ View ${filename}`}
-                    <span style={{ marginLeft: 'auto', fontSize: '0.7rem', color: '#888' }}>
-                      {filename.endsWith('.json') ? 'JSON' : 'TEXT'}
-                    </span>
-                  </button>
-                  {docViewer === filename && (
-                    <div style={{ marginTop: '0.5rem', position: 'relative' }}>
-                      <button
-                        className="phase-btn"
-                        style={{ position: 'absolute', top: '0.4rem', right: '0.4rem', zIndex: 2, background: '#1a1a1b', border: '1px solid #444' }}
-                        onClick={() => navigator.clipboard.writeText(docContent).catch(() => {})}
-                        title="Copy to clipboard"
-                      >📋 Copy</button>
-                      <pre className="doc-viewer-pre" style={{ background: '#0a0a0b', border: '1px solid #333', borderRadius: '8px', padding: '0.75rem', maxHeight: '320px', overflow: 'auto', fontSize: '0.72rem', fontFamily: "'JetBrains Mono', 'Fira Code', monospace", color: '#aaf', lineHeight: '1.6', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                        <code>{docContent}</code>
-                      </pre>
-                    </div>
-                  )}
-                </div>
-              ))}
+              {REFERENCE_DOCS.map(renderDocItem)}
+            </div>
+
+            <div className="control-group">
+              <div className="control-group-title" style={{ color: '#a78bfa' }}>
+                🧩 Claude Skill
+                <InfoTip text="The HypnoVis skill files for Claude. Download both, then add them to a Claude skill so it can generate presets and sequences for you directly." />
+              </div>
+              <button
+                className="action-btn secondary"
+                style={{ width: '100%', marginBottom: '0.75rem' }}
+                onClick={() => downloadFiles(SKILL_DOCS)}
+              >
+                ⬇ Download Skill Files
+              </button>
+              {SKILL_DOCS.map(renderDocItem)}
             </div>
 
             <div className="control-group">

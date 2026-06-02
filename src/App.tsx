@@ -26,7 +26,7 @@ const MOTION_FIELDS: (keyof AppState)[] = [
   // Fragmentation
   'fragmentPhaseOffset', 'fragmentBorderWidth', 'fragmentDutyCycle', 'fragmentPulseRate',
   // Hue Rotation, Arm Taper, Cell Falloff & Vignette
-  'hueRotation', 'hueRotateSpeed', 'armTaper', 'cellFalloff', 'eyeSpread', 'eyeSoftness', 'vignetteIntensity', 'vignetteSize', 'vignetteSoftness',
+  'hueRotation', 'hueRotateSpeed', 'taperStrength', 'armTaper', 'cellFalloff', 'eyeSpread', 'eyeSoftness', 'vignetteIntensity', 'vignetteSize', 'vignetteSoftness',
   // Audio (continuous params)
   'audioVolume', 'audioCarrierFreq', 'audioBeatFreq', 'audioDroneLevel',
   'audioNoiseLevel', 'audioTremoloRate', 'audioTremoloDepth',
@@ -242,6 +242,7 @@ function App() {
         const PROTECTED: Set<keyof AppState> = new Set([
           'sequencePhases', 'sequenceTitle', 'sequencerEnabled',
           'sequencerPlaying', 'sequencerLoop', 'rampEpoch',
+          'highQuality',
         ]);
 
         const fromState = prevSnapshotRef.current ?? state;
@@ -320,9 +321,16 @@ function App() {
 
         const startTime = performance.now();
 
+        // 'inversionPulse' transition: accumulate a pulse phase whose half-period
+        // (on-time = off-time) scales from 500ms at the start of the transition
+        // down to 50ms at the end, so the inversion flashes faster and faster.
+        let invPulsePhase = 0;
+        let invLastFrame  = startTime;
+
         const animateTransition = () => {
           if (!activeRef.current) return;
-          const elapsed = performance.now() - startTime;
+          const now = performance.now();
+          const elapsed = now - startTime;
           const raw = Math.min(elapsed / transitionMs, 1);
 
           // Ease the progress value itself
@@ -342,6 +350,9 @@ function App() {
               break;
             case 'fragment':
               eased = easeInOut(raw); // fragment = ease + grid surge overlay
+              break;
+            case 'inversionPulse':
+              eased = easeInOut(raw); // inversionPulse = ease + accelerating invert flash
               break;
             default:
               eased = raw;
@@ -385,6 +396,17 @@ function App() {
               eased
             );
             interpolated.fragmentPhaseOffset = baseOffset + 270 * fragSurge;
+          }
+
+          // Inversion Pulse: override the inversion overlay with a pulse whose
+          // half-period scales 500ms → 50ms across the transition, then release.
+          if (transitionType === 'inversionPulse') {
+            const halfPeriod = 500 + (50 - 500) * raw;          // ms, on == off
+            const dt = now - invLastFrame;
+            invLastFrame = now;
+            invPulsePhase += dt / (2 * halfPeriod);             // 1 cycle = on + off
+            const on = (invPulsePhase % 1) < 0.5;
+            interpolated.transitionInversion = on ? 100 : 0;    // 0 = override-but-off
           }
 
           // Text lines always snap
