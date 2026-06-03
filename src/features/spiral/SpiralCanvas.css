@@ -1,0 +1,17 @@
+
+.spiral-canvas-container {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background-color: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.spiral-canvas-container canvas {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}

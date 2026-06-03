@@ -1,0 +1,201 @@
+# HypnoVis Preset JSON Generator Prompt
+# Paste this file into any AI assistant to instruct it to generate a preset.
+
+Import/Export Schema for HypnoVis presets.
+All fields optional. Omit keys to keep defaults. Use only what shifts relative to defaults.
+
+Be creative and bold. HypnoVis is built for dense, layered, hypnotic results — stack
+features aggressively and let them interact: combine the Eyes effect with a strong
+vignette, ramp the spiral speed, run the inversion pulse, and layer audio. Whenever a
+preset uses more than one rhythmic effect, prefer enabling Master Tempo and locking the
+effects to it so everything pulses together on a single coherent beat (see Master Tempo
+below) — this is the single biggest lever for a polished, professional-feeling result.
+
+# ── Type aliases ─────────────────────────────────────────────────────────────
+type Theme         = "Darken" | "Lighten";
+type ColorMode     = "default" | "static" | "kaleidoscopic";
+type SpiralMath    = "power" | "log" | "archimedean" | "fermat";
+type Anim          = "fade" | "flash" | "pulse";
+type Ramp          = "legacy" | "sawtooth";
+type FragDir       = "uniform" | "alternating" | "mirror"; // Eyes spin pattern
+type DroneInterval = "octave" | "fifth" | "fourth" | "majorThird" | "tritone" | "minorSecond";
+type BeatMode      = "binaural" | "isochronic" | "monaural";
+type Waveform      = "sine" | "triangle" | "square" | "sawtooth";
+type NoiseType     = "white" | "pink" | "brown";
+type TempoRatio    = "1/8" | "1/4" | "1/2" | "1" | "2" | "4" | "8";
+
+interface Preset {
+  # ── Visuals ───────────────────────────────────────────────────────────────
+  mode?: Theme;                     # "Darken" (black bg) or "Lighten" (white bg) [Default: "Darken"]
+  arms?: number;                    # 1-30 [Default: 6]
+  turns?: number;                   # 0.1-10 [Default: 3]
+  curve?: number;                   # 0.1-5 [Default: 4.5]  (controls density for 'power' & 'log' math)
+  width?: number;                   # 1-100 max stroke [Default: 50]
+  spiralMath?: SpiralMath;          # spiral curve formula [Default: "log"]
+                                    #   power:       r = R·t^curve (classic)
+                                    #   log:         r = R·(e^(c·t)−1)/(e^c−1) (exponential; best with sequencer)
+                                    #   archimedean: r = R·t (constant arm spacing; curve ignored)
+                                    #   fermat:      r = R·√t (dense outer arms; curve ignored)
+  armTaper?: number;                # 0-100 % of outer arm length that fades to transparent [Default: 0]
+  maxFps?: number;                  # 1-240 [Default: 144]
+
+  # ── Motion ────────────────────────────────────────────────────────────────
+  rotationSpeed?: number;           # 0-20 [Default: 1]
+  direction?: 1 | -1;               # 1: outward, -1: inward [Default: -1]
+  wobble?: number;                  # 0-1 amplitude [Default: 0.1]
+  wobblePhase?: number;             # offset [Default: 0]
+  wobbleSpeed?: number;             # 0-20 [Default: 1]
+
+  # ── Center Dot ────────────────────────────────────────────────────────────
+  centerDotEnabled?: boolean;       # [Default: false]
+  centerDotRadius?: number;         # 1-200 [Default: 10]
+  centerDotColor?: string;          # hex [Default: "#ffffff"]
+
+  # ── Colors ────────────────────────────────────────────────────────────────
+  gradientType?: "Single" | "Two" | "Three"; # [Default: "Three"]
+  color1?: string;                  # hex [Default: "#ff0055"]
+  color2?: string;                  # hex [Default: "#00ffcc"]
+  color3?: string;                  # hex [Default: "#0055ff"]
+  colorMode?: ColorMode;            # "default" cycles, "static" fixed, "kaleidoscopic" mirrored [Default: "default"]
+  kaleidoscopeSectors?: number;     # 1-16 [Default: 8]
+  colorCyclingSpeed?: number;       # 0-20 [Default: 1]
+  hueRotation?: number;             # 0-360° global hue offset [Default: 0]
+  hueRotateSpeed?: number;          # -360 to 360 °/sec continuous hue roll [Default: 0]
+
+  # ── Eyes ──────────────────────────────────────────────────────────────────
+  # Renders two side-by-side spirals — a hypnotic "two eyes" effect. Each eye is
+  # confined to its own soft radial region so they stay distinct while still
+  # blending toward the middle.
+  fragmentEnabled?: boolean;        # master on/off [Default: false]
+  fragmentDirectionMode?: FragDir;  # spin pattern [Default: "alternating"]
+                                    #   uniform     = both eyes spin the same way
+                                    #   alternating = eyes spin in opposite directions
+                                    #   mirror      = opposite spin, but both pull in/out together
+  fragmentPhaseOffset?: number;     # 0-360° rotation offset between the two eyes [Default: 90]
+  eyeSpread?: number;               # 0-100 % how far each eye reaches toward the other [Default: 55]
+  eyeSoftness?: number;             # 0-100 % edge falloff softness (low = crisp, high = gradual) [Default: 60]
+
+  # ── Vignette ──────────────────────────────────────────────────────────────
+  vignetteEnabled?: boolean;        # [Default: false]
+  vignetteIntensity?: number;       # 0-100 edge opacity (100 = full blackout at the edge) [Default: 70]
+  vignetteSize?: number;            # 0-95 inner transparent radius as % of width [Default: 50]
+  vignetteColor?: string;           # hex edge tint [Default: "#000000"]
+  vignetteShape?: "ellipse" | "circle"; # gradient shape [Default: "ellipse"]
+  vignetteSoftness?: number;        # 0-100 transition softness (low = hard ring, high = gradual) [Default: 60]
+
+  # ── Subliminal Text ───────────────────────────────────────────────────────
+  textEnabled?: boolean;
+  textLines?: string;               # use \n literal or \\n for lines
+  textColor?: string;               # hex [Default: "#ffffff"]
+  textSize?: number;                # 0.5-3.0 scale [Default: 1]
+  textAnimation?: Anim;             # "fade" | "flash" | "pulse" [Default: "fade"]
+  randomOrder?: boolean;            # no-repeat shuffle [Default: false]
+  lineSpeed?: number;               # interval between phrases ms, min 100 [Default: 800]
+  lineTime?: number;                # phrase duration ms, min 100 [Default: 400]
+
+  # ── Text Flash (background flash on phrase change) ────────────────────────
+  flashEnabled?: boolean;
+  flashColor?: string;              # hex
+  flashIntensity?: number;          # 0-100
+
+  # ── Independent Strobe ────────────────────────────────────────────────────
+  # NOTE: All users are presented with a full photosensitivity warning and
+  # terms of use on first load. Strobe and flash features are safe to include
+  # in generated presets without additional caveats.
+  intenseFlash?: boolean;
+  intenseStrobeDelay?: number;      # delay between flashes ms, min 5 [Default: 50]
+  strobeLength?: number;            # flash duration ms, min 5 [Default: 20]
+  strobeIntensity?: number;         # 0-100 overlay opacity [Default: 50]
+  strobeColor1?: string;            # hex
+  strobeColor2?: string;            # hex
+  strobeColor3?: string;            # hex
+  strobeColorCount?: number;        # 1-3 active colors [Default: 2]
+
+  # ── Inversion Pulse ───────────────────────────────────────────────────────
+  inversionEnabled?: boolean;
+  inversionRate?: number;           # seconds between pulse starts, min 0.1 [Default: 2.0]
+  inversionDuration?: number;       # seconds inversion held, min 0.05 [Default: 0.08]
+  inversionIntensity?: number;      # 0-100 (100 = full inversion) [Default: 100]
+  rampInversionSpeed?: boolean;     # tie pulse rate to master speed ramp [Default: false]
+
+  # ── Audio ─────────────────────────────────────────────────────────────────
+  audioEnabled?: boolean;           # user-gesture-gated [Default: false]
+  audioVolume?: number;             # 0-100 (perceptual x² curve) [Default: 35]
+  # Tone layer
+  audioToneEnabled?: boolean;       # [Default: true]
+  audioBeatMode?: BeatMode;         # "binaural" (L/R panned, needs headphones)
+                                    # "isochronic" (carrier amp-modulated by square LFO)
+                                    # "monaural" (acoustic beat, any speaker) [Default: "binaural"]
+  audioCarrierFreq?: number;        # 50-800 Hz base pitch [Default: 220]
+  audioBeatFreq?: number;           # 0.5-40 Hz; brainwave bands: <4 delta, <8 theta,
+                                    # <13 alpha, <30 beta, ≥30 gamma [Default: 6]
+  audioWaveform?: Waveform;         # "sine" | "triangle" | "square" | "sawtooth" [Default: "sine"]
+  # Drone layer
+  audioDroneEnabled?: boolean;      # [Default: false]
+  audioDroneInterval?: DroneInterval; # harmonic relationship to carrier [Default: "fifth"]
+  audioDroneLevel?: number;         # 0-100 mix [Default: 40]
+  # Noise bed
+  audioNoiseEnabled?: boolean;      # [Default: false]
+  audioNoiseType?: NoiseType;       # "white" | "pink" | "brown" [Default: "brown"]
+  audioNoiseLevel?: number;         # 0-100 mix [Default: 25]
+  # Tremolo (LFO on master)
+  audioTremoloRate?: number;        # 0-10 Hz, 0 = off [Default: 0]
+  audioTremoloDepth?: number;       # 0-100 % [Default: 0]
+  # Ramp coupling
+  rampAudioBeat?: boolean;          # tie beat freq to master speed ramp (capped at 40 Hz) [Default: false]
+
+  # ── Speed Ramping ─────────────────────────────────────────────────────────
+  pulseSpeed?: boolean;             # master toggle [Default: false]
+  rampMode?: Ramp;                  # "sawtooth" linear+snap | "legacy" sine [Default: "sawtooth"]
+  pulseMin?: number;                # trough 0-1 (legacy only) [Default: 0.2]
+  pulseMax?: number;                # peak 1-8 [Default: 1.8]
+  rampDuration?: number;            # full cycle seconds [Default: 30]
+  rampSpiralSpeed?: boolean;        # apply to spiral rotation [Default: false]
+  rampColorSpeed?: boolean;         # apply to color cycling [Default: false]
+  rampTextSpeed?: boolean;          # apply to text & flash [Default: false]
+  rampStrobeSpeed?: boolean;        # apply to strobe rate [Default: false]
+  rampInversionSpeed?: boolean;     # apply to inversion rate [Default: false]
+  rampAudioBeat?: boolean;          # apply to audio beat frequency [Default: false]
+
+  # ── Master Tempo ──────────────────────────────────────────────────────────
+  # When masterTempoEnabled is true, locked effects have their rate fields
+  # overridden by the BPM + ratio, creating a single coherent pulse across
+  # multiple systems. Old presets load with masterTempoEnabled: false and
+  # behave exactly as before.
+  masterTempoEnabled?: boolean;     # master on/off switch [Default: false]
+  masterTempoBpm?: number;          # 30-240 BPM [Default: 60]
+  masterTempoIndicator?: boolean;   # show pulsing corner dot when debugEnabled [Default: true]
+  masterTempoBeats?: number;        # beats per measure: 2,3,4,5,6,7,8,12,16 [Default: 4]
+  # Per-system lock pairs. Lock bool + ratio string. All default to false / "1".
+  # Edge-triggered systems (strobe, inversion, text) also have a beat offset field
+  # (1-indexed, 1 = downbeat). This lets you stagger pulses within a measure.
+  lockColorCycling?: boolean;       lockColorCyclingRatio?: TempoRatio;
+  lockHueRotate?: boolean;          lockHueRotateRatio?: TempoRatio;
+  lockStrobe?: boolean;             lockStrobeRatio?: TempoRatio;       lockStrobeBeat?: number;        # 1-masterTempoBeats [Default: 1]
+  lockInversion?: boolean;          lockInversionRatio?: TempoRatio;    lockInversionBeat?: number;     # 1-masterTempoBeats [Default: 1]
+  lockText?: boolean;               lockTextRatio?: TempoRatio;         lockTextBeat?: number;          # 1-masterTempoBeats [Default: 1]
+  lockSpeedRamp?: boolean;          lockSpeedRampRatio?: TempoRatio;
+  lockAudioTremolo?: boolean;       lockAudioTremoloRatio?: TempoRatio;
+  lockAudioBeat?: boolean;          lockAudioBeatRatio?: TempoRatio;
+  #
+  # Derived rate values when locked (for reference — not stored in preset):
+  #   Color cycling:   colorCyclingSpeed  = BPM/60 × ratio          (cyc/s)
+  #   Hue rotate:      hueRotateSpeed     = BPM/60 × ratio × 360    (°/s)
+  #   Strobe:          intenseStrobeDelay = period − strobeLength    (ms)
+  #   Inversion:       inversionRate      = 60/BPM / ratio           (s)
+  #   Text:            lineSpeed          = 60/BPM / ratio × 1000    (ms)
+  #   Speed ramp:      rampDuration       = 60/BPM / ratio           (s)
+  #   Audio tremolo:   audioTremoloRate   = min(10, BPM/60 × ratio)  (Hz)
+  #   Audio beat:      audioBeatFreq      = min(40, BPM/60 × ratio)  (Hz)
+
+  # ── Debug ─────────────────────────────────────────────────────────────────
+  debugEnabled?: boolean;           # show debug tab [Default: false]
+}
+
+OUTPUT CONSTRAINTS:
+1. Return ONLY a single raw valid minified or prettified JSON object.
+2. Do not wrap in markdown tags or add any commentary.
+3. Every color must be valid hex like "#ff0000".
+
+Example: Theta-band relaxation with mirror eyes and breathing audio:
+{"spiralMath":"log","arms":6,"turns":3,"curve":2.5,"rotationSpeed":0.3,"direction":-1,"color1":"#1a0033","color2":"#330066","color3":"#000022","colorCyclingSpeed":0.4,"hueRotateSpeed":3,"fragmentEnabled":true,"fragmentDirectionMode":"mirror","fragmentPhaseOffset":120,"eyeSpread":50,"eyeSoftness":65,"armTaper":35,"vignetteEnabled":true,"vignetteIntensity":80,"vignetteSize":35,"vignetteSoftness":70,"audioEnabled":true,"audioVolume":35,"audioBeatMode":"binaural","audioCarrierFreq":220,"audioBeatFreq":6,"audioWaveform":"sine","audioDroneEnabled":true,"audioDroneInterval":"octave","audioDroneLevel":35,"audioNoiseEnabled":true,"audioNoiseType":"brown","audioNoiseLevel":30,"audioTremoloRate":0.25,"audioTremoloDepth":20,"centerDotEnabled":false}

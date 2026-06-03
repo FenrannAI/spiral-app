@@ -1,0 +1,117 @@
+.text-overlay-container {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+  overflow: hidden;
+}
+
+.flash-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  pointer-events: none;
+  z-index: 5;
+  opacity: 0;
+}
+
+.trigger-flash {
+  animation: flashAnim 0.15s ease-out forwards;
+}
+
+@keyframes flashAnim {
+  0% { opacity: var(--flash-opacity, 0.5); }
+  100% { opacity: 0; }
+}
+
+.text-line {
+  font-size: calc(clamp(2rem, 10vw, 6rem) * var(--text-size-mult, 1));
+  font-weight: 900;
+  text-align: center;
+  padding: 1rem;
+  background: transparent !important;
+  text-transform: uppercase;
+  letter-spacing: 0.2rem;
+  transition: opacity 0.4s;
+  z-index: 15;
+}
+
+/* ===== Fade (default) ===== */
+.text-anim-fade {
+  animation: fadeInOut ease-in-out forwards;
+}
+
+@keyframes fadeInOut {
+  0% {
+    opacity: 0;
+    transform: scale(0.9);
+    filter: blur(10px);
+  }
+  15% {
+    opacity: 1;
+    transform: scale(1);
+    filter: blur(0px);
+  }
+  85% {
+    opacity: 1;
+    transform: scale(1.05);
+    filter: blur(0px);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.2);
+    filter: blur(5px);
+  }
+}
+
+/* ===== Flash (instant pop, no blur) ===== */
+.text-anim-flash {
+  animation: flashIn ease-out forwards;
+}
+
+@keyframes flashIn {
+  0% {
+    opacity: 0;
+    transform: scale(0.5);
+  }
+  15% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  85% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.2);
+  }
+}
+
+/* ===== Pulse (slow growth 80% → 120%) ===== */
+.text-anim-pulse {
+  animation: pulseIn ease-in-out forwards;
+}
+
+@keyframes pulseIn {
+  0% {
+    opacity: 0;
+    transform: scale(0.8);
+  }
+  10% {
+    opacity: 1;
+    transform: scale(0.8);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.2);
+  }
+}

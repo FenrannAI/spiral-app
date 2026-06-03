@@ -1,0 +1,138 @@
+# HypnoVis Sequence JSON Generator Prompt
+# Paste this file into any AI assistant to instruct it to generate a multi-phase sequence.
+
+Sequencer Schema for HypnoVis sequences.
+Generates a complete multi-phase animation journey.
+
+type Transition = "linear" | "ease" | "pulse" | "spinBurst" | "fragment";
+
+interface Sequence {
+  sequenceTitle: string;            # Name of this sequence journey
+  sequencerLoop?: boolean;          # Loop back to Phase 1 [Default: true]
+  sequencePhases: Phase[];          # Sequence steps in chronological order
+}
+
+interface Phase {
+  id: string;                       # Simple short slug/identifier
+  title: string;                    # UI phase label shown to user
+  duration: number;                 # Hold time in seconds (e.g., 5 or 10)
+  transitionType?: Transition;      # Transition style [Default: "linear"]
+                                    #   linear    — constant rate
+                                    #   ease      — slow-fast-slow
+                                    #   pulse     — overshoots target then settles
+                                    #   spinBurst — ease + extra rotation surge
+                                    #   fragment  — ease + temporary grid surge overlay
+  transitionDuration?: number;      # Transition time in seconds [Default: 2]
+
+  # snapshot MUST be a valid JSON-stringified object containing partial
+  # properties that dynamically shift relative to app defaults.
+  # Escaped JSON string pattern: "{\"rotationSpeed\": 1, \"color1\": \"#ffffff\"}"
+  snapshot: string;
+}
+
+# ── HOW TRANSITIONS WORK ─────────────────────────────────────────────────────
+# Each AppState field falls into one of three categories during a transition:
+#
+# MOTION (continuously interpolated)
+#   turns, curve, width, wobble*, colorCyclingSpeed, rotationSpeed, lineSpeed,
+#   lineTime, textSize, flashIntensity, intenseStrobeDelay, strobeLength,
+#   strobeIntensity, pulseMin, pulseMax, rampDuration, centerDotRadius,
+#   inversionRate, inversionDuration, inversionIntensity,
+#   fragmentPhaseOffset, eyeSpread, eyeSoftness,
+#   hueRotation, hueRotateSpeed, armTaper,
+#   vignetteIntensity, vignetteSize, vignetteSoftness,
+#   audioVolume, audioCarrierFreq, audioBeatFreq, audioDroneLevel,
+#   audioNoiseLevel, audioTremoloRate, audioTremoloDepth,
+#   masterTempoBpm
+#
+# STRUCTURE (snapped at end of transition; never lerped)
+#   arms, direction, gradientType, textAnimation, mode, spiralMath, colorMode,
+#   kaleidoscopeSectors, strobeColorCount, maxFps, rampMode,
+#   fragmentDirectionMode, vignetteShape,
+#   audioBeatMode, audioWaveform, audioDroneInterval, audioNoiseType,
+#   lockColorCyclingRatio, lockHueRotateRatio, lockStrobeRatio,
+#   lockInversionRatio, lockTextRatio,
+#   lockSpeedRampRatio, lockAudioTremoloRatio, lockAudioBeatRatio,
+#   masterTempoBeats,
+#   lockStrobeBeat, lockInversionBeat, lockTextBeat
+#
+# SNAP (applied instantly at phase start)
+#   textEnabled, flashEnabled, intenseFlash, pulseSpeed, randomOrder,
+#   debugEnabled, centerDotEnabled, all ramp*Speed toggles,
+#   inversionEnabled, fragmentEnabled (Eyes),
+#   vignetteEnabled,
+#   audioEnabled, audioToneEnabled, audioDroneEnabled, audioNoiseEnabled,
+#   rampAudioBeat,
+#   masterTempoEnabled, masterTempoIndicator,
+#   lockColorCycling, lockHueRotate, lockStrobe,
+#   lockInversion, lockText, lockSpeedRamp, lockAudioTremolo, lockAudioBeat
+#
+# COLOR (interpolated)
+#   color1, color2, color3, textColor, flashColor, centerDotColor,
+#   strobeColor1, strobeColor2, strobeColor3,
+#   vignetteColor
+
+# ── DELTA FORMAT ─────────────────────────────────────────────────────────────
+# Phase snapshots use a DELTA format — only include fields that change relative
+# to the previous phase (or relative to app defaults for Phase 1).
+# Missing fields are inherited from the previous phase's fully-expanded state.
+# This keeps sequences compact and AI-token-efficient.
+#
+# Color fields follow the same rule: only include a color key if it changes.
+# The player interpolates colors falling back to the previous phase's value
+# for any omitted color field.
+#
+# Example: if color1 is the same across all phases, omit it from every snapshot.
+
+# ── PHOTOSENSITIVITY NOTE ────────────────────────────────────────────────────
+# All users are presented with a full photosensitivity and hypnotic-effects
+# warning modal on first load, and must agree before entering the app.
+# Strobe, flash, and inversion effects are safe to include in generated
+# sequences without additional caveats.
+
+# ── MIX BOLDLY + USE MASTER TEMPO ────────────────────────────────────────────
+# Great sequences layer effects aggressively and let phases evolve dramatically:
+# shift spiralMath, swing direction, bring the Eyes effect in and out, deepen the
+# vignette, ramp the speed, and move audio bands across the journey. When a phase
+# runs more than one rhythmic effect (strobe, inversion, text, color cycling),
+# enable Master Tempo and lock them to a shared BPM so the whole scene pulses on
+# one beat — it is the most effective way to make a sequence feel intentional.
+
+OUTPUT CONSTRAINTS:
+1. Return ONLY a single raw valid JSON object.
+2. Do not wrap in markdown or add explanations.
+3. Fully escape nested JSON strings inside the "snapshot" elements.
+4. Include all 9 required color fields in EVERY phase snapshot.
+5. Use spiralMath to choose the curve formula.
+
+# ── EXAMPLE: Theta-band relaxation journey with audio and mirror eyes ───────
+{
+  "sequenceTitle": "Mirror Descent",
+  "sequencerLoop": true,
+  "sequencePhases": [
+    {
+      "id": "open",
+      "title": "Opening",
+      "duration": 12,
+      "transitionType": "ease",
+      "transitionDuration": 3,
+      "snapshot": "{\"spiralMath\":\"power\",\"arms\":6,\"turns\":2,\"curve\":3,\"rotationSpeed\":0.5,\"direction\":1,\"color1\":\"#ff0055\",\"color2\":\"#00ffcc\",\"color3\":\"#0055ff\",\"textColor\":\"#ffffff\",\"flashColor\":\"#ffffff\",\"centerDotColor\":\"#ffffff\",\"strobeColor1\":\"#ffffff\",\"strobeColor2\":\"#ff0000\",\"strobeColor3\":\"#0000ff\",\"audioEnabled\":true,\"audioVolume\":30,\"audioBeatMode\":\"binaural\",\"audioCarrierFreq\":300,\"audioBeatFreq\":10,\"audioWaveform\":\"sine\"}"
+    },
+    {
+      "id": "descend",
+      "title": "Descent",
+      "duration": 20,
+      "transitionType": "ease",
+      "transitionDuration": 8,
+      "snapshot": "{\"spiralMath\":\"log\",\"arms\":6,\"turns\":3,\"curve\":2.5,\"rotationSpeed\":0.25,\"direction\":-1,\"color1\":\"#1a0033\",\"color2\":\"#330066\",\"color3\":\"#000022\",\"textColor\":\"#ffffff\",\"flashColor\":\"#ffffff\",\"centerDotColor\":\"#ffffff\",\"strobeColor1\":\"#ffffff\",\"strobeColor2\":\"#ff0000\",\"strobeColor3\":\"#0000ff\",\"vignetteEnabled\":true,\"vignetteIntensity\":75,\"vignetteSize\":40,\"audioEnabled\":true,\"audioVolume\":35,\"audioBeatMode\":\"binaural\",\"audioCarrierFreq\":220,\"audioBeatFreq\":6,\"audioWaveform\":\"sine\",\"audioDroneEnabled\":true,\"audioDroneInterval\":\"octave\",\"audioDroneLevel\":35,\"audioNoiseEnabled\":true,\"audioNoiseType\":\"brown\",\"audioNoiseLevel\":30,\"audioTremoloRate\":0.25,\"audioTremoloDepth\":20}"
+    },
+    {
+      "id": "mirror",
+      "title": "Mirror",
+      "duration": 30,
+      "transitionType": "fragment",
+      "transitionDuration": 6,
+      "snapshot": "{\"spiralMath\":\"log\",\"arms\":6,\"turns\":3,\"curve\":2.5,\"rotationSpeed\":0.2,\"direction\":-1,\"color1\":\"#1a0033\",\"color2\":\"#330066\",\"color3\":\"#000022\",\"textColor\":\"#ffffff\",\"flashColor\":\"#ffffff\",\"centerDotColor\":\"#ffffff\",\"strobeColor1\":\"#ffffff\",\"strobeColor2\":\"#ff0000\",\"strobeColor3\":\"#0000ff\",\"fragmentEnabled\":true,\"fragmentDirectionMode\":\"mirror\",\"fragmentPhaseOffset\":120,\"eyeSpread\":50,\"eyeSoftness\":65,\"armTaper\":35,\"vignetteEnabled\":true,\"vignetteIntensity\":80,\"vignetteSize\":35,\"vignetteSoftness\":70,\"audioEnabled\":true,\"audioVolume\":35,\"audioBeatMode\":\"binaural\",\"audioCarrierFreq\":220,\"audioBeatFreq\":6,\"audioWaveform\":\"sine\",\"audioDroneEnabled\":true,\"audioDroneInterval\":\"octave\",\"audioDroneLevel\":35,\"audioNoiseEnabled\":true,\"audioNoiseType\":\"brown\",\"audioNoiseLevel\":30,\"audioTremoloRate\":0.25,\"audioTremoloDepth\":20}"
+    }
+  ]
+}

@@ -1,0 +1,161 @@
+# HypnoVis Preset Keys — Quick Reference
+# Flat alphabetical list of every preset key, its type, valid range, and default.
+# For full descriptions and structural notes see PRESET_SCHEMA.txt.
+
+# Format:  key  ·  type  ·  range  ·  default  ·  group
+
+# ── Visual: Spiral ──────────────────────────────────────────────────────────
+arms                   · number   · 1 – 30                  · 6           · Visuals
+armTaper               · number   · 0 – 100 (%)             · 0           · Visuals
+curve                  · number   · 0.1 – 5                 · 4.5         · Visuals
+direction              · 1 | -1   ·                         · -1          · Motion (1 outward, -1 inward)
+maxFps                 · number   · 1 – 240                 · 144         · Visuals
+mode                   · enum     · "Darken" | "Lighten"    · "Darken"    · Visuals
+rotationSpeed          · number   · 0 – 20                  · 1           · Motion
+spiralMath             · enum     · "power" | "log" |
+                                    "archimedean" | "fermat" · "log"      · Visuals
+turns                  · number   · 0.1 – 10                · 3           · Visuals
+width                  · number   · 1 – 100                 · 50          · Visuals
+wobble                 · number   · 0 – 1                   · 0.1         · Motion
+wobblePhase            · number   · any                     · 0           · Motion
+wobbleSpeed            · number   · 0 – 20                  · 1           · Motion
+
+# ── Center Dot ──────────────────────────────────────────────────────────────
+centerDotColor         · hex      · "#rrggbb"               · "#ffffff"   · Center Dot
+centerDotEnabled       · boolean  ·                         · false       · Center Dot
+centerDotRadius        · number   · 1 – 200                 · 10          · Center Dot
+
+# ── Colors ──────────────────────────────────────────────────────────────────
+color1                 · hex      · "#rrggbb"               · "#ff0055"   · Colors
+color2                 · hex      · "#rrggbb"               · "#00ffcc"   · Colors
+color3                 · hex      · "#rrggbb"               · "#0055ff"   · Colors
+colorCyclingSpeed      · number   · 0 – 20                  · 1           · Colors
+colorMode              · enum     · "default" | "static" |
+                                    "kaleidoscopic"         · "default"   · Colors
+gradientType           · enum     · "Single" | "Two" | "Three" · "Three"  · Colors
+hueRotation            · number   · 0 – 360 (°)             · 0           · Colors
+hueRotateSpeed         · number   · -360 – 360 (°/sec)      · 0           · Colors
+kaleidoscopeSectors    · number   · 1 – 16                  · 8           · Colors
+
+# ── Vignette ────────────────────────────────────────────────────────────────
+vignetteColor          · hex      · "#rrggbb"               · "#000000"   · Vignette
+vignetteEnabled        · boolean  ·                         · false       · Vignette
+vignetteIntensity      · number   · 0 – 100                 · 70          · Vignette
+vignetteShape          · enum     · "ellipse" | "circle"    · "ellipse"   · Vignette
+vignetteSize           · number   · 0 – 95                  · 50          · Vignette
+vignetteSoftness       · number   · 0 – 100                 · 60          · Vignette (low = hard ring, high = gradual)
+
+# ── Eyes ────────────────────────────────────────────────────────────────────
+# Renders two side-by-side spirals. Each eye is confined to its own soft radial
+# region so they stay distinct while still blending toward the middle.
+fragmentEnabled        · boolean  ·                         · false       · Eyes (master on/off)
+fragmentDirectionMode  · enum     · "uniform" | "alternating" |
+                                    "mirror"                · "alternating" · Eyes
+                       #   uniform     = both eyes spin the same way
+                       #   alternating = eyes spin in opposite directions
+                       #   mirror      = opposite spin, but both pull in/out together
+fragmentPhaseOffset    · number   · 0 – 360 (°)             · 90          · Eyes (rotation offset between eyes)
+eyeSpread              · number   · 0 – 100 (%)             · 55          · Eyes (how far each eye reaches toward the other)
+eyeSoftness            · number   · 0 – 100 (%)             · 60          · Eyes (edge falloff softness)
+
+# ── Subliminal Text ─────────────────────────────────────────────────────────
+flashColor             · hex      · "#rrggbb"               · "#ffffff"   · Subliminal
+flashEnabled           · boolean  ·                         · false       · Subliminal
+flashIntensity         · number   · 0 – 100                 · 50          · Subliminal
+lineSpeed              · number   · 100 – 1000 (ms)         · 800         · Subliminal
+lineTime               · number   · 100 – 1000 (ms)         · 400         · Subliminal
+randomOrder            · boolean  ·                         · false       · Subliminal
+textAnimation          · enum     · "fade" | "flash" | "pulse" · "fade"   · Subliminal
+textColor              · hex      · "#rrggbb"               · "#ffffff"   · Subliminal
+textEnabled            · boolean  ·                         · false       · Subliminal
+textLines              · string   · "\n"-separated phrases  · "Relax\nLet go\nFocus\nBreathe" · Subliminal
+textSize               · number   · 0.5 – 3                 · 1           · Subliminal
+
+# ── Independent Strobe ──────────────────────────────────────────────────────
+intenseFlash           · boolean  ·                         · false       · Strobe
+intenseStrobeDelay     · number   · 5 – 1000 (ms)           · 50          · Strobe
+strobeColor1           · hex      · "#rrggbb"               · "#ffffff"   · Strobe
+strobeColor2           · hex      · "#rrggbb"               · "#ff0000"   · Strobe
+strobeColor3           · hex      · "#rrggbb"               · "#0000ff"   · Strobe
+strobeColorCount       · number   · 1 – 3                   · 2           · Strobe
+strobeIntensity        · number   · 0 – 100                 · 50          · Strobe
+strobeLength           · number   · 5 – 1000 (ms)           · 20          · Strobe
+
+# ── Inversion Pulse ─────────────────────────────────────────────────────────
+inversionDuration      · number   · 0.05 – 2 (s)            · 0.08        · Inversion
+inversionEnabled       · boolean  ·                         · false       · Inversion
+inversionIntensity     · number   · 0 – 100                 · 100         · Inversion
+inversionRate          · number   · 0.1 – 10 (s)            · 2.0         · Inversion
+
+# ── Audio ───────────────────────────────────────────────────────────────────
+audioBeatFreq          · number   · 0.5 – 40 (Hz)           · 6           · Audio
+audioBeatMode          · enum     · "binaural" | "isochronic" |
+                                    "monaural"              · "binaural"  · Audio
+audioCarrierFreq       · number   · 50 – 800 (Hz)           · 220         · Audio
+audioDroneEnabled      · boolean  ·                         · false       · Audio
+audioDroneInterval     · enum     · "octave" | "fifth" | "fourth" |
+                                    "majorThird" | "tritone" |
+                                    "minorSecond"           · "fifth"     · Audio
+audioDroneLevel        · number   · 0 – 100                 · 40          · Audio
+audioEnabled           · boolean  · user-gesture-gated      · false       · Audio
+audioNoiseEnabled      · boolean  ·                         · false       · Audio
+audioNoiseLevel        · number   · 0 – 100                 · 25          · Audio
+audioNoiseType         · enum     · "white" | "pink" | "brown" · "brown"  · Audio
+audioToneEnabled       · boolean  ·                         · true        · Audio
+audioTremoloDepth      · number   · 0 – 100 (%)             · 0           · Audio
+audioTremoloRate       · number   · 0 – 10 (Hz)             · 0           · Audio
+audioVolume            · number   · 0 – 100 (%, x² curve)   · 35          · Audio
+audioWaveform          · enum     · "sine" | "triangle" |
+                                    "square" | "sawtooth"   · "sine"      · Audio
+
+# ── Speed Ramp ──────────────────────────────────────────────────────────────
+pulseMax               · number   · 1 – 8                   · 1.8         · Speed Ramp
+pulseMin               · number   · 0 – 1 (legacy mode only) · 0.2        · Speed Ramp
+pulseSpeed             · boolean  ·                         · false       · Speed Ramp
+rampAudioBeat          · boolean  ·                         · false       · Speed Ramp (capped at 40 Hz)
+rampColorSpeed         · boolean  ·                         · false       · Speed Ramp
+rampDuration           · number   · 1 – 60 (s)              · 30          · Speed Ramp
+rampFragmentPulse      · boolean  ·                         · false       · Speed Ramp
+rampInversionSpeed     · boolean  ·                         · false       · Speed Ramp
+rampMode               · enum     · "sawtooth" | "legacy"   · "sawtooth"  · Speed Ramp
+rampSpiralSpeed        · boolean  ·                         · false       · Speed Ramp
+rampStrobeSpeed        · boolean  ·                         · false       · Speed Ramp
+rampTextSpeed          · boolean  ·                         · false       · Speed Ramp
+
+# ── Master Tempo ────────────────────────────────────────────────────────────
+masterTempoEnabled     · boolean  ·                         · false       · Master Tempo
+masterTempoBpm         · number   · 30 – 240 (BPM)          · 60          · Master Tempo
+masterTempoIndicator   · boolean  ·                         · true        · Master Tempo
+masterTempoBeats       · number   · 2 – 16                  · 4           · Master Tempo (beats per measure)
+#
+# Lock pairs — boolean + TempoRatio ("1/8"|"1/4"|"1/2"|"1"|"2"|"4"|"8")
+# Edge-triggered systems also have a lockXxxBeat field (1-indexed beat in measure)
+lockColorCycling       · boolean  ·                         · false       · Master Tempo
+lockColorCyclingRatio  · TempoRatio ·                       · "1"         · Master Tempo
+lockHueRotate          · boolean  ·                         · false       · Master Tempo
+lockHueRotateRatio     · TempoRatio ·                       · "1"         · Master Tempo
+lockStrobe             · boolean  ·                         · false       · Master Tempo
+lockStrobeRatio        · TempoRatio ·                       · "1"         · Master Tempo
+lockStrobeBeat         · number   · 1 – masterTempoBeats    · 1           · Master Tempo
+lockInversion          · boolean  ·                         · false       · Master Tempo
+lockInversionRatio     · TempoRatio ·                       · "1"         · Master Tempo
+lockInversionBeat      · number   · 1 – masterTempoBeats    · 1           · Master Tempo
+lockText               · boolean  ·                         · false       · Master Tempo
+lockTextRatio          · TempoRatio ·                       · "1"         · Master Tempo
+lockTextBeat           · number   · 1 – masterTempoBeats    · 1           · Master Tempo
+lockSpeedRamp          · boolean  ·                         · false       · Master Tempo
+lockSpeedRampRatio     · TempoRatio ·                       · "1"         · Master Tempo
+lockAudioTremolo       · boolean  ·                         · false       · Master Tempo
+lockAudioTremoloRatio  · TempoRatio ·                       · "1"         · Master Tempo
+lockAudioBeat          · boolean  ·                         · false       · Master Tempo
+lockAudioBeatRatio     · TempoRatio ·                       · "1"         · Master Tempo
+
+# ── Debug ───────────────────────────────────────────────────────────────────
+debugEnabled           · boolean  · shows the Debug tab     · false       · Developer
+
+# ── Sequencer (metadata only — keep at top level, not inside a snapshot) ────
+sequencerEnabled       · boolean  ·                         · false
+sequencerLoop          · boolean  ·                         · true
+sequencerPlaying       · boolean  · runtime, not in saved presets · false
+sequenceTitle          · string   ·                         · "My Sequence"
+sequencePhases         · array    · see SEQUENCE_SCHEMA.txt · []

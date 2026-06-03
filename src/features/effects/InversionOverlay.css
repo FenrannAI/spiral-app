@@ -1,0 +1,13 @@
+.inversion-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  mix-blend-mode: difference;
+  pointer-events: none;
+  /* Sits above the spiral canvas / zoom wrapper (z-index ~0) but
+     below the TextOverlay container (z-index 10) so phrases remain
+     readable on top of the inverted background. */
+  z-index: 8;
+}

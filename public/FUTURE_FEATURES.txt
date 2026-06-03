@@ -1,0 +1,36 @@
+# HypnoVis — Future Features
+
+A holding area for planned and pitched features. Move items to in-progress
+or remove them when implementation begins.
+
+════════════════════════════════════════════════════════════════════════════
+## PARKED — Sequencer Timed Words
+════════════════════════════════════════════════════════════════════════════
+Allow individual phases in a sequence to trigger a specific word or short
+phrase at a precise time offset within the phase. The timed word overrides
+whatever the regular text overlay is currently displaying for a set duration,
+with its own independent styling (color, size, animation, flash) before
+handing control back to the normal phrase cycle.
+
+Open design questions before implementing:
+- Timing anchor: phase-relative offset vs. absolute sequence timestamp?
+- Multiple timed words per phase?
+- Should timed words fire during the transition window or only during the hold?
+- Own styling per entry, or inherit from the phase?
+- Own flash/strobe settings independent of the phase's flash settings?
+- When the word expires, does the regular phrase cycle resume mid-rotation
+  or restart from the beginning?
+- Behaviour when the word overlaps a phase boundary (cut off vs. let finish)?
+- Behaviour on pause/resume if the trigger time has already passed?
+
+════════════════════════════════════════════════════════════════════════════
+## PITCHED — Aggressive / Disorienting Features (brief)
+════════════════════════════════════════════════════════════════════════════
+
+### Subliminal Single-Frame Text Bursts
+Flash text for just 1–2 frames (16–33 ms at 60 fps) — short enough that
+the conscious mind does not fully register a readable word, but long enough
+that the visual cortex processes it. Operates completely independently of
+the regular text overlay cycle. Each burst has its own trigger interval,
+word list, color, and size. A sequencer phase could ramp the burst rate
+from sparse to relentless as depth increases.
