@@ -3,13 +3,16 @@
 # For full descriptions and structural notes see PRESET_SCHEMA.txt.
 
 # Format:  key  ·  type  ·  range  ·  default  ·  group
+#
+# BASE-ONLY fields (maxFps, plus sequencer metadata) live only at the top level
+# of a preset/sequence — never inside a phase's `settings` object.
 
 # ── Visual: Spiral ──────────────────────────────────────────────────────────
 arms                   · number   · 1 – 30                  · 6           · Visuals
 armTaper               · number   · 0 – 100 (%)             · 0           · Visuals
 curve                  · number   · 0.1 – 10                · 4.5         · Visuals
 direction              · 1 | -1   ·                         · -1          · Motion (1 outward, -1 inward)
-maxFps                 · number   · 1 – 240                 · 144         · Visuals
+maxFps                 · number   · 1 – 240                 · 144         · Visuals (base-only: top level, not per-phase)
 mode                   · enum     · "Darken" | "Lighten"    · "Darken"    · Visuals
 rotationSpeed          · number   · 0 – 20                  · 1           · Motion
 spiralMath             · enum     · "power" | "log" |
@@ -153,7 +156,7 @@ lockAudioBeatRatio     · TempoRatio ·                       · "1"         · 
 # ── Debug ───────────────────────────────────────────────────────────────────
 debugEnabled           · boolean  · shows the Debug tab     · false       · Developer
 
-# ── Sequencer (metadata only — keep at top level, not inside a snapshot) ────
+# ── Sequencer (metadata only — keep at top level, not inside a phase's settings) ────
 sequencerEnabled       · boolean  ·                         · false
 sequencerLoop          · boolean  ·                         · true
 sequencerPlaying       · boolean  · runtime, not in saved presets · false

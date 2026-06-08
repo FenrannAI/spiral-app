@@ -598,6 +598,56 @@ kbd {
   cursor: not-allowed;
 }
 
+.phase-edit-btn {
+  border-color: rgba(168, 139, 250, 0.4);
+  color: #c4b5fd;
+}
+.phase-edit-btn:hover:not(:disabled) {
+  border-color: #a78bfa;
+  color: #fff;
+}
+
+/* ── Phase-edit banner (top of the Controls tab) ─────────────────────────── */
+.phase-edit-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 0.6rem 1rem 0;
+  padding: 0.6rem 0.85rem;
+  background: rgba(168, 139, 250, 0.12);
+  border: 1px solid rgba(168, 139, 250, 0.45);
+  border-radius: 10px;
+  animation: fadeInMsg 0.25s ease-out;
+}
+.phase-edit-banner-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  font-size: 0.82rem;
+  color: #ede9fe;
+  flex: 1;
+  min-width: 0;
+}
+.phase-edit-banner-text strong { color: #fff; }
+.phase-edit-banner-sub {
+  font-size: 0.68rem;
+  color: #c4b5fd;
+  font-weight: 400;
+}
+.phase-edit-done {
+  flex-shrink: 0;
+  background: #a78bfa;
+  color: #1a1033;
+  border: none;
+  border-radius: 7px;
+  padding: 0.4rem 0.9rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.phase-edit-done:hover { background: #c4b5fd; }
+
 /* Notice shown after importing a preset that contains a sequence */
 .sequence-import-notice {
   margin-top: 0.6rem;

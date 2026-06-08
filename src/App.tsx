@@ -10,6 +10,7 @@ import { useAudio } from './features/audio/useAudio';
 import { usePersistentState } from './utils/hooks';
 import { AppState, initialState, TransitionType } from './types';
 import { applyMasterTempo } from './utils/tempo';
+import { isPhaseSetting } from './utils/fields';
 
 /* ── field categories for interpolation ───────────────────────── */
 
@@ -27,6 +28,8 @@ const MOTION_FIELDS: (keyof AppState)[] = [
   'fragmentPhaseOffset', 'fragmentBorderWidth', 'fragmentDutyCycle', 'fragmentPulseRate',
   // Hue Rotation, Arm Taper, Cell Falloff & Vignette
   'hueRotation', 'hueRotateSpeed', 'taperStrength', 'armTaper', 'cellFalloff', 'eyeSpread', 'eyeSoftness', 'vignetteIntensity', 'vignetteSize', 'vignetteSoftness',
+  // Afterimage Bloom
+  'afterimageIntensity', 'afterimageDuration',
   // Audio (continuous params)
   'audioVolume', 'audioCarrierFreq', 'audioBeatFreq', 'audioDroneLevel',
   'audioNoiseLevel', 'audioTremoloRate', 'audioTremoloDepth',
@@ -38,7 +41,7 @@ const MOTION_FIELDS: (keyof AppState)[] = [
 const STRUCTURE_FIELDS: (keyof AppState)[] = [
   'arms', 'direction', 'gradientType', 'textAnimation', 'mode',
   'spiralRenderMode', 'spiralMath', 'colorMode', 'kaleidoscopeSectors', 'strobeColorCount',
-  'maxFps', 'rampMode',
+  'rampMode',
   // Zoom Tunnel (archived)
   // 'zoomDirection', 'zoomEasing', 'zoomMode',
   // Fragmentation
@@ -59,7 +62,7 @@ const STRUCTURE_FIELDS: (keyof AppState)[] = [
 const SNAP_FIELDS: (keyof AppState)[] = [
   'textEnabled', 'flashEnabled', 'intenseFlash', 'pulseSpeed',
   'rampSpiralSpeed', 'rampColorSpeed', 'rampTextSpeed', 'rampStrobeSpeed',
-  'centerDotEnabled', 'randomOrder', 'debugEnabled',
+  'centerDotEnabled', 'randomOrder', 'afterimageEnabled',
   'sequencerEnabled', 'sequencerPlaying', 'sequencerLoop',
   // Inversion Pulse
   'inversionEnabled', 'rampInversionSpeed',
@@ -120,25 +123,62 @@ function App() {
   const [state, setState, loaded] = usePersistentState<AppState>('hypno-spiral-state', initialState);
   const [isSidebarOpen, setSidebarOpen] = useState(window.innerWidth > 768);
   const [currentPhaseIdx, setCurrentPhaseIdx] = useState(-1);
+  // Phase-edit mode: index of the phase being edited, or null for the base preset.
+  const [editingPhaseIndex, setEditingPhaseIndex] = useState<number | null>(null);
 
   const phaseTimerRef = useRef<number | undefined>(undefined);
   const transitionRAFRef = useRef<number | undefined>(undefined);
   const activeRef = useRef(true);
-  // prevSnapshotRef stores the FULLY EXPANDED AppState after each phase completes.
-  // Phase snapshots are now stored as deltas (only changed fields), so we must
-  // expand each delta onto the previous full state before interpolating.
+  // prevSnapshotRef stores the full AppState applied at the end of each phase,
+  // used only as the interpolation start point for the next transition.
   const prevSnapshotRef = useRef<AppState | null>(null);
-  // Cache of raw parsed deltas keyed by snapshot string.
-  const phaseSnapshotCacheRef = useRef<Map<string, Partial<AppState>>>(new Map());
 
   const updateState = useCallback((partial: Partial<AppState>) => {
     setState(prev => ({ ...prev, ...partial }));
   }, [setState]);
 
-  // Derive rate-locked state. All rendering/effect components receive this;
-  // ControlsPanel receives the original so slider values stay user-editable.
-  // Computed here (before hooks that consume it, e.g. useAudio).
-  const derivedState = applyMasterTempo(state);
+  // Exit phase-edit if the phase disappears (deleted) or playback starts.
+  useEffect(() => {
+    if (editingPhaseIndex === null) return;
+    if (state.sequencerPlaying || editingPhaseIndex >= state.sequencePhases.length) {
+      setEditingPhaseIndex(null);
+    }
+  }, [editingPhaseIndex, state.sequencerPlaying, state.sequencePhases.length]);
+
+  // The phase currently being edited (if any).
+  const editingPhase = editingPhaseIndex !== null ? state.sequencePhases[editingPhaseIndex] : undefined;
+
+  // While editing a phase, the canvas + controls preview that phase by merging
+  // its settings over the base state (base-only/global fields stay from base).
+  // The base preset's own visual fields are never overwritten.
+  const effectiveState: AppState = editingPhase
+    ? { ...state, ...editingPhase.settings }
+    : state;
+
+  // Updates from the Controls panel are routed: while editing a phase, fields
+  // that belong to a phase are written into that phase's `settings`; everything
+  // else (base-only/global) writes to the top-level base state.
+  const updateStateRouted = useCallback((partial: Partial<AppState>) => {
+    if (editingPhaseIndex === null) { updateState(partial); return; }
+    const idx = editingPhaseIndex;
+    setState(prev => {
+      const phase = prev.sequencePhases[idx];
+      if (!phase) return { ...prev, ...partial };
+      const phasePart: Record<string, unknown> = {};
+      const basePart: Record<string, unknown> = {};
+      (Object.keys(partial) as (keyof AppState)[]).forEach(k => {
+        if (isPhaseSetting(k)) phasePart[k] = (partial as Record<string, unknown>)[k];
+        else basePart[k] = (partial as Record<string, unknown>)[k];
+      });
+      const phases = [...prev.sequencePhases];
+      phases[idx] = { ...phase, settings: { ...phase.settings, ...phasePart } };
+      return { ...prev, ...basePart, sequencePhases: phases };
+    });
+  }, [editingPhaseIndex, updateState, setState]);
+
+  // Derive rate-locked state. All rendering/effect components receive this
+  // (built from the effective/preview state so phase edits show live).
+  const derivedState = applyMasterTempo(effectiveState);
 
   // Audio engine — boots on state.audioEnabled, tears down on disable/unmount
   useAudio(derivedState);
@@ -223,34 +263,25 @@ function App() {
       };
 
       try {
-        // Parse the stored delta (cache by string to avoid redundant JSON.parse)
-        let delta = phaseSnapshotCacheRef.current.get(phase.snapshot);
-        if (!delta) {
-          delta = JSON.parse(phase.snapshot) as Partial<AppState>;
-          phaseSnapshotCacheRef.current.set(phase.snapshot, delta);
-        }
-        // fromState  — what we animate FROM (current visuals for phase 0, previous
-        //              full expanded state for subsequent phases). Used only as the
-        //              interpolation start point for smooth transitions.
-        // baseline   — what the delta is expanded onto to produce the TARGET state.
-        //              Phase 0 always expands against initialState so that fields not
-        //              mentioned in the delta (e.g. fragmentEnabled) resolve to their
-        //              defaults rather than inheriting whatever the user had active
-        //              before pressing Play.
-        // Fields that must never be overwritten from a phase snapshot.
-        // Defined here so we can strip them from toState immediately after expansion.
+        // Phases are fully-explicit settings objects (no deltas, no escaped JSON).
+        const settings = (phase.settings ?? {}) as Partial<AppState>;
+
+        // Fields that must never be overwritten by a phase: sequencer metadata,
+        // the ramp epoch, and the base-only fields (maxFps, highQuality,
+        // debugEnabled) which are set once at the base level, never per phase.
         const PROTECTED: Set<keyof AppState> = new Set([
           'sequencePhases', 'sequenceTitle', 'sequencerEnabled',
           'sequencerPlaying', 'sequencerLoop', 'rampEpoch',
-          'highQuality',
+          'maxFps', 'highQuality', 'debugEnabled',
         ]);
 
+        // fromState — interpolation start (current visuals for phase 0, the
+        // previous phase's full state afterwards).
         const fromState = prevSnapshotRef.current ?? state;
-        const baseline  = prevSnapshotRef.current ?? initialState;
-        // Expand the delta onto the baseline, then strip any protected fields that
-        // may have been pulled in from initialState (e.g. sequencerEnabled: false).
-        // Without this strip, updateState({ ...toState }) would kill the sequencer.
-        const toState = { ...baseline, ...delta } as AppState;
+        // toState — the explicit target. Phases are fully explicit, so we layer
+        // them onto initialState (fills any field a phase happens to omit), then
+        // strip protected fields so playback can't clobber base/sequencer state.
+        const toState = { ...initialState, ...settings } as AppState;
         for (const key of PROTECTED) delete (toState as any)[key];
 
         const transitionType: TransitionType = phase.transitionType || 'linear';
@@ -461,11 +492,14 @@ function App() {
     <WarningModal />
     <div className={`app-container ${isSidebarOpen ? 'sidebar-open' : 'sidebar-closed'}`}>
       <MemoControlsPanel
-        state={state}
-        updateState={updateState}
+        state={effectiveState}
+        updateState={updateStateRouted}
         isOpen={isSidebarOpen}
         toggle={toggleSidebar}
         currentPhaseIdx={currentPhaseIdx}
+        editingPhaseIndex={editingPhaseIndex}
+        onEditPhase={(i) => setEditingPhaseIndex(i)}
+        onExitPhaseEdit={() => setEditingPhaseIndex(null)}
       />
       <main className="main-view">
         <SpiralCanvas state={derivedState} />
@@ -495,6 +529,7 @@ const MemoControlsPanel = React.memo(ControlsPanel, (prev, next) => {
   return (
     prev.isOpen === next.isOpen &&
     prev.currentPhaseIdx === next.currentPhaseIdx &&
+    prev.editingPhaseIndex === next.editingPhaseIndex &&
     prev.state === next.state
   );
 });

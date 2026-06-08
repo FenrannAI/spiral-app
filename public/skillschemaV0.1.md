@@ -1,6 +1,8 @@
 # HypnoVis Schema Reference
 
-All preset fields are optional. Omit a key to keep its default — only include what shifts relative to defaults.
+All fields are optional. Omit a key to keep its **default** — include only what you want to set. This applies the same way to a single preset and to each sequence phase's `settings`: an omitted field always falls back to its default, never to another phase's value.
+
+> **Base-only (top-level) fields** — these live at the top level of a preset or sequence and **must never appear inside a phase's `settings`**: `maxFps` (1–240, default 144), plus the sequencer metadata `sequencerEnabled`, `sequenceTitle`, `sequencerLoop`. They are global/structural for the whole artifact. (`maxFps` rarely needs changing — leave it out unless asked.)
 
 ## Types
 
@@ -35,7 +37,6 @@ Transition   = "linear" | "ease" | "pulse" | "spinBurst" | "fragment" | "inversi
 | `width` | 1–100 (max stroke) | 50 |
 | `spiralMath` | SpiralMath | `"log"` |
 | `armTaper` | 0–100 (%) | 0 — % of outer arm length that fades to transparent |
-| `maxFps` | 1–240 | 144 |
 
 **`spiralMath` formulas:**
 - `"power"` — r = R·t^curve (classic)
@@ -196,7 +197,7 @@ When `masterTempoEnabled` is true, locked effects have their rate fields overrid
 |---|---|---|
 | `masterTempoEnabled` | boolean | false |
 | `masterTempoBpm` | 30–240 BPM | 60 |
-| `masterTempoIndicator` | boolean — pulsing corner dot when debugEnabled | true |
+| `masterTempoIndicator` | boolean — pulsing corner beat dot (debug only) | true |
 | `masterTempoBeats` | 2,3,4,5,6,7,8,12,16 beats per measure | 4 |
 
 **Lock pairs** — each system has a boolean + TempoRatio. Edge-triggered systems (strobe, inversion, text) also have a 1-indexed beat offset (1 = downbeat) to stagger pulses within a measure:
@@ -224,19 +225,17 @@ All lock booleans default to `false`; all ratios default to `"1"`; all beat offs
 - Audio tremolo: `audioTremoloRate = min(10, BPM/60 × ratio)` (Hz)
 - Audio beat: `audioBeatFreq = min(40, BPM/60 × ratio)` (Hz)
 
-### Debug
-| Field | Values | Default |
-|---|---|---|
-| `debugEnabled` | boolean (shows Debug tab) | false |
-
 ---
 
 ## Sequence schema
 
 ```typescript
 interface Sequence {
+  // Top-level / base-only fields:
   sequenceTitle: string;
   sequencerLoop?: boolean;       // default: true
+  sequencerEnabled?: boolean;    // optional; set true to auto-arm on import
+  maxFps?: number;               // optional base-only; default 144
   sequencePhases: Phase[];
 }
 
@@ -246,18 +245,20 @@ interface Phase {
   duration: number;              // hold time in seconds
   transitionType?: Transition;   // default: "linear"
   transitionDuration?: number;   // seconds, default: 2
-  snapshot: string;              // ESCAPED JSON STRING of a partial Preset
+  settings: Settings;            // a REAL nested object (not a string) — the visual fields for this phase
 }
 ```
 
-Sequencer metadata stays at the top level, never inside a snapshot: `sequencerEnabled`, `sequencerLoop`, `sequenceTitle`, `sequencePhases`. (`sequencerPlaying` is runtime-only and never saved.)
+`settings` is a plain JSON object whose keys are any of the per-phase preset fields above (everything **except** the base-only fields). It is **self-contained**: include the fields you want this phase to set; omitted fields use their defaults, never the previous phase's value. No escaping, no deltas, no inheritance.
+
+Top-level-only fields (never inside `settings`): `sequenceTitle`, `sequencerLoop`, `sequencerEnabled`, `maxFps`. (`sequencerPlaying` is runtime-only and never saved.)
 
 ### Transition types
 - `"linear"` — constant rate
 - `"ease"` — slow-fast-slow
 - `"pulse"` — overshoots target then settles
 - `"spinBurst"` — ease + extra rotation surge
-- `"fragment"` — ease + temporary grid surge overlay
+- `"fragment"` — ease + brings the Eyes effect in with a phase-offset surge
 - `"inversionPulse"` — ease + full-screen inversion that flashes faster and faster (500ms→50ms) across the transition, overriding the normal inversion pulse until it completes
 
 ### Transition field categories
@@ -266,30 +267,123 @@ Sequencer metadata stays at the top level, never inside a snapshot: `sequencerEn
 `turns`, `curve`, `width`, `wobble`, `wobbleSpeed`, `wobblePhase`, `colorCyclingSpeed`, `rotationSpeed`, `lineSpeed`, `lineTime`, `textSize`, `flashIntensity`, `intenseStrobeDelay`, `strobeLength`, `strobeIntensity`, `pulseMin`, `pulseMax`, `rampDuration`, `centerDotRadius`, `inversionRate`, `inversionDuration`, `inversionIntensity`, `fragmentPhaseOffset`, `eyeSpread`, `eyeSoftness`, `hueRotation`, `hueRotateSpeed`, `armTaper`, `vignetteIntensity`, `vignetteSize`, `vignetteSoftness`, `audioVolume`, `audioCarrierFreq`, `audioBeatFreq`, `audioDroneLevel`, `audioNoiseLevel`, `audioTremoloRate`, `audioTremoloDepth`, `masterTempoBpm`
 
 **STRUCTURE** — snapped at end of transition, never lerped:
-`arms`, `direction`, `gradientType`, `textAnimation`, `mode`, `spiralMath`, `colorMode`, `kaleidoscopeSectors`, `strobeColorCount`, `maxFps`, `rampMode`, `fragmentDirectionMode`, `vignetteShape`, `audioBeatMode`, `audioWaveform`, `audioDroneInterval`, `audioNoiseType`, all `lock*Ratio` and `lock*Beat` fields, `masterTempoBeats`
+`arms`, `direction`, `gradientType`, `textAnimation`, `mode`, `spiralMath`, `colorMode`, `kaleidoscopeSectors`, `strobeColorCount`, `rampMode`, `fragmentDirectionMode`, `vignetteShape`, `audioBeatMode`, `audioWaveform`, `audioDroneInterval`, `audioNoiseType`, all `lock*Ratio` and `lock*Beat` fields, `masterTempoBeats`
 
 **SNAP** — applied instantly at phase start:
-`textEnabled`, `flashEnabled`, `intenseFlash`, `pulseSpeed`, `randomOrder`, `debugEnabled`, `centerDotEnabled`, all `ramp*Speed` toggles, `inversionEnabled`, `fragmentEnabled` (Eyes), `vignetteEnabled`, `audioEnabled`, `audioToneEnabled`, `audioDroneEnabled`, `audioNoiseEnabled`, `rampAudioBeat`, `masterTempoEnabled`, `masterTempoIndicator`, all `lock*` booleans
+`textEnabled`, `flashEnabled`, `intenseFlash`, `pulseSpeed`, `randomOrder`, `centerDotEnabled`, all `ramp*Speed` toggles, `inversionEnabled`, `fragmentEnabled` (Eyes), `vignetteEnabled`, `audioEnabled`, `audioToneEnabled`, `audioDroneEnabled`, `audioNoiseEnabled`, `rampAudioBeat`, `masterTempoEnabled`, `masterTempoIndicator`, all `lock*` booleans
 
 **COLOR** — interpolated:
 `color1`, `color2`, `color3`, `textColor`, `flashColor`, `centerDotColor`, `strobeColor1`, `strobeColor2`, `strobeColor3`, `vignetteColor`
 
 ### Critical sequence rules
 
-1. `snapshot` must be a **JSON-stringified escaped string**, not an object literal.
-   - Correct: `"{\"rotationSpeed\":1.5,\"color1\":\"#ff0000\"}"`
-   - Wrong: `{"rotationSpeed": 1.5}` (unescaped object)
+1. `settings` must be a **real nested JSON object**, never a string.
+   - Correct: `"settings": { "rotationSpeed": 1.5, "color1": "#ff0000" }`
+   - Wrong: `"settings": "{\"rotationSpeed\":1.5}"` (escaped string)
 
-2. **All fields use delta format, colors included** — include a field (color or otherwise) ONLY when it changes from the previous phase's fully-expanded state, or for phase 1 from the app defaults. Omitted fields automatically inherit the previous phase's value; omitted colors are interpolated from the carried-over value. You do **not** repeat unchanged colors. Example: if phase 1's palette equals the app defaults, omit all color fields from it entirely.
+2. **Each phase is self-contained, vs. defaults.** Include a field only when you want this phase to set it; an omitted field uses its **default**, NOT the previous phase's value — there is no inheritance or carry-over. To keep a look or animate a value across phases, repeat the relevant fields in each phase. (A MOTION/COLOR field only glides if both the outgoing and incoming phase specify it.)
 
-3. Use `spiralMath` (not the removed `spiralRenderMode`) to choose the curve formula.
+3. **No base-only field inside `settings`** — `maxFps`, `sequencerEnabled`, `sequenceTitle`, `sequencerLoop` belong only at the top level.
 
-4. Never include archived zoom fields or removed grid-fragment fields.
+4. Use `spiralMath` (not the removed `spiralRenderMode`) to choose the curve formula.
+
+5. Never include archived zoom fields or removed grid-fragment fields.
 
 ### Output constraints (both types)
 - Return **only** a single raw valid JSON object — no markdown fences, no commentary.
 - All colors must be valid hex: `#[0-9a-fA-F]{6}`.
-- Sequence snapshots must be fully escaped nested JSON strings.
+- Everything is plain nested JSON — never emit an escaped JSON string.
 
 ### Running a generated sequence (tell the user)
 A pasted sequence does **not** auto-play. After importing the JSON the user must: (1) open the Sequencer tab, (2) turn the sequencer on with the enable toggle at the top, (3) press Play. The app shows this reminder automatically on import.
+
+---
+
+## Examples
+
+### Preset (single, flat object)
+```json
+{
+  "mode": "Darken",
+  "spiralMath": "log",
+  "arms": 6,
+  "turns": 3,
+  "curve": 4.5,
+  "direction": -1,
+  "rotationSpeed": 0.4,
+  "color1": "#1a0033",
+  "color2": "#330066",
+  "color3": "#000022",
+  "fragmentEnabled": true,
+  "fragmentDirectionMode": "mirror",
+  "fragmentPhaseOffset": 120,
+  "eyeSpread": 50,
+  "eyeSoftness": 65,
+  "armTaper": 35,
+  "vignetteEnabled": true,
+  "vignetteIntensity": 80,
+  "vignetteSize": 35,
+  "vignetteSoftness": 70,
+  "audioEnabled": true,
+  "audioBeatMode": "binaural",
+  "audioCarrierFreq": 220,
+  "audioBeatFreq": 6,
+  "audioDroneEnabled": true,
+  "audioNoiseEnabled": true,
+  "audioNoiseType": "brown"
+}
+```
+
+### Sequence (nested `settings`, self-contained phases)
+Note how each phase repeats the fields it needs — there is no inheritance. The
+colors are restated in "descend" because that phase changes them; "open" omits
+them, so it uses the defaults.
+```json
+{
+  "sequenceTitle": "Mirror Descent",
+  "sequencerLoop": true,
+  "sequencerEnabled": true,
+  "sequencePhases": [
+    {
+      "id": "open",
+      "title": "Opening",
+      "duration": 12,
+      "transitionType": "ease",
+      "transitionDuration": 3,
+      "settings": {
+        "spiralMath": "power", "arms": 6, "turns": 2, "curve": 3,
+        "rotationSpeed": 0.5, "direction": 1
+      }
+    },
+    {
+      "id": "descend",
+      "title": "Descent",
+      "duration": 20,
+      "transitionType": "ease",
+      "transitionDuration": 8,
+      "settings": {
+        "spiralMath": "log", "arms": 6, "turns": 3, "curve": 2.5,
+        "rotationSpeed": 0.25, "direction": -1,
+        "color1": "#1a0033", "color2": "#330066", "color3": "#000022",
+        "vignetteEnabled": true, "vignetteIntensity": 75, "vignetteSize": 40
+      }
+    },
+    {
+      "id": "mirror",
+      "title": "Mirror",
+      "duration": 30,
+      "transitionType": "fragment",
+      "transitionDuration": 6,
+      "settings": {
+        "spiralMath": "log", "arms": 6, "turns": 3, "curve": 2.5,
+        "rotationSpeed": 0.2, "direction": -1,
+        "color1": "#1a0033", "color2": "#330066", "color3": "#000022",
+        "fragmentEnabled": true, "fragmentDirectionMode": "mirror",
+        "fragmentPhaseOffset": 120, "eyeSpread": 50, "eyeSoftness": 65,
+        "armTaper": 35,
+        "vignetteEnabled": true, "vignetteIntensity": 80, "vignetteSize": 35, "vignetteSoftness": 70
+      }
+    }
+  ]
+}
+```

@@ -10,6 +10,7 @@ import {
 import { freqToNote, beatToBand } from '../../utils/audio';
 import { TEMPO_RATIOS, ratioLabel, tempoPeriodSec, tempoRateHz } from '../../utils/tempo';
 import { debugStore } from '../../utils/debugStore';
+import { BASE_ONLY, NON_SETTINGS, isPhaseSetting } from '../../utils/fields';
 
 interface Props {
   state: AppState;
@@ -17,6 +18,10 @@ interface Props {
   isOpen: boolean;
   toggle: () => void;
   currentPhaseIdx: number;
+  // Phase-edit mode: index of the phase being edited (null = editing the base preset)
+  editingPhaseIndex: number | null;
+  onEditPhase: (index: number) => void;
+  onExitPhaseEdit: () => void;
 }
 
 /* ── Slider with inline numeric input ───────────────────────── */
@@ -141,28 +146,6 @@ function makeReset(keys: (keyof AppState)[], updateState: (p: Partial<AppState>)
 
 /* ── Module-level constants ─────────────────────────────────── */
 
-/**
- * Fields that are never meaningful to export (preset or sequence):
- * runtime-only, archived/no-op, or developer-only.
- */
-const EXPORT_SKIP = new Set<keyof AppState>([
-  'sequencerPlaying',
-  'rampEpoch',
-  'transitionInversion',
-  'highQuality',
-  'debugEnabled',
-  'textBg',
-  'spiralRenderMode',
-  // Archived zoom tunnel — no runtime effect
-  'zoomEnabled', 'zoomSpeed', 'zoomDirection',
-  'zoomMin', 'zoomMax', 'zoomEasing', 'zoomMode', 'rampZoomSpeed',
-]);
-
-/** Sequencer metadata — excluded from visual preset exports unless phases exist. */
-const SEQUENCER_FIELDS = new Set<keyof AppState>([
-  'sequencerEnabled', 'sequencerPlaying', 'sequencerLoop',
-  'sequenceTitle', 'sequencePhases',
-]);
 
 /** Public docs served from /public, viewable & downloadable in the Data tab. */
 const REFERENCE_DOCS = ['PRESET_KEYS.txt', 'PRESET_SCHEMA.txt', 'PRESET_TEMPLATE.json', 'SEQUENCE_SCHEMA.txt'] as const;
@@ -200,8 +183,22 @@ function extractJsonObjects(text: string): string[] {
 
 /* ── Main component ─────────────────────────────────────────── */
 
-export const ControlsPanel: React.FC<Props> = ({ state, updateState, isOpen, toggle, currentPhaseIdx }) => {
+export const ControlsPanel: React.FC<Props> = ({ state, updateState, isOpen, toggle, currentPhaseIdx, editingPhaseIndex, onEditPhase, onExitPhaseEdit }) => {
   const [activeTab, setActiveTab] = useState<'settings' | 'sequencer' | 'data' | 'debug'>('settings');
+
+  const isEditingPhase = editingPhaseIndex !== null;
+  const editingPhaseTitle = isEditingPhase ? state.sequencePhases[editingPhaseIndex]?.title : undefined;
+
+  // Phase-edit mode lives on the Controls tab. Leaving that tab exits edit mode
+  // so other tabs (Sequencer/Preset) always act on the real base preset.
+  const switchTab = (tab: 'settings' | 'sequencer' | 'data' | 'debug') => {
+    if (isEditingPhase && tab !== 'settings') onExitPhaseEdit();
+    setActiveTab(tab);
+  };
+  const startEditPhase = (index: number) => {
+    onEditPhase(index);
+    setActiveTab('settings');
+  };
   const [importText, setImportText] = useState('');
   const [importStatus, setImportStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [importHadSequence, setImportHadSequence] = useState(false);
@@ -228,18 +225,27 @@ export const ControlsPanel: React.FC<Props> = ({ state, updateState, isOpen, tog
   /* ── Export / import helpers ──────────────────────────────── */
 
   /** Build a minimal delta preset — only fields that differ from defaults. */
-  const buildExportDelta = (): Record<string, unknown> => {
-    const delta: Record<string, unknown> = {};
-    const hasPhases = state.sequencePhases.length > 0;
-    (Object.keys(state) as (keyof AppState)[]).forEach(key => {
-      if (EXPORT_SKIP.has(key)) return;
-      // Only include sequencer fields when there are actual phases
-      if (SEQUENCER_FIELDS.has(key) && !hasPhases) return;
-      if (JSON.stringify(state[key]) !== JSON.stringify(initialState[key])) {
-        delta[key] = state[key];
-      }
+  // Build the export object. Fully explicit (no deltas).
+  //  • No phases  → a single preset: every meaningful field, including base-only.
+  //  • Has phases → a sequence: base-only fields + sequencer metadata at the top
+  //    level, with each phase carrying its own fully-explicit `settings` object.
+  const buildExport = (): Record<string, unknown> => {
+    if (state.sequencePhases.length > 0) {
+      const out: Record<string, unknown> = {};
+      BASE_ONLY.forEach(k => { out[k] = state[k]; });
+      // Top-level-only sequencer metadata (never inside a phase).
+      out.sequencerEnabled = state.sequencerEnabled;
+      out.sequenceTitle    = state.sequenceTitle;
+      out.sequencerLoop    = state.sequencerLoop;
+      out.sequencePhases   = state.sequencePhases;
+      return out;
+    }
+    const out: Record<string, unknown> = {};
+    (Object.keys(initialState) as (keyof AppState)[]).forEach(key => {
+      if (NON_SETTINGS.has(key)) return; // keep base-only; drop runtime/archived/meta
+      out[key] = state[key];
     });
-    return delta;
+    return out;
   };
 
   // Robust clipboard copy: prefer the async Clipboard API, fall back to a
@@ -273,7 +279,7 @@ export const ControlsPanel: React.FC<Props> = ({ state, updateState, isOpen, tog
   };
 
   const handleCopyDelta = async () => {
-    if (await copyToClipboard(JSON.stringify(buildExportDelta()))) {
+    if (await copyToClipboard(JSON.stringify(buildExport()))) {
       setCopyDeltaFeedback(true);
       setTimeout(() => setCopyDeltaFeedback(false), 2000);
     }
@@ -298,7 +304,7 @@ export const ControlsPanel: React.FC<Props> = ({ state, updateState, isOpen, tog
     return () => cancelAnimationFrame(animFrameRef.current);
   }, [activeTab]);
 
-  const exportString = JSON.stringify(buildExportDelta(), null, 2);
+  const exportString = JSON.stringify(buildExport(), null, 2);
 
   const handleCopy = async () => {
     if (await copyToClipboard(exportString)) {
@@ -323,11 +329,16 @@ export const ControlsPanel: React.FC<Props> = ({ state, updateState, isOpen, tog
       const phases = (json as { sequencePhases?: unknown }).sequencePhases;
       const hasSequence = Array.isArray(phases) && phases.length > 0;
       if (hasSequence) {
-        const firstPhase = (phases as Array<{ snapshot?: unknown }>)[0];
-        if (typeof firstPhase?.snapshot !== 'string') throw new Error('Phase 1 missing snapshot.');
-        JSON.parse(firstPhase.snapshot); // validate it's parseable JSON
+        const firstSettings = (phases as Array<{ settings?: unknown }>)[0]?.settings;
+        if (typeof firstSettings !== 'object' || firstSettings === null) {
+          throw new Error('Phase 1 missing a settings object.');
+        }
+        // Apply top-level base/meta, then phase 1's settings so the canvas
+        // previews the opening look before the user presses Play.
+        updateState({ ...initialState, ...json, ...(firstSettings as Partial<AppState>) });
+      } else {
+        updateState({ ...initialState, ...json });
       }
-      updateState({ ...initialState, ...json });
       setImportStatus('success');
       setImportHadSequence(hasSequence);
       setImportWarning(
@@ -413,32 +424,17 @@ export const ControlsPanel: React.FC<Props> = ({ state, updateState, isOpen, tog
   /* ── Sequencer helpers ────────────────────────────────────── */
 
   /**
-   * Capture a delta snapshot of the current visual state.
-   *
-   * Phase 1 is diffed against initialState; each subsequent phase is diffed
-   * against the fully-expanded state of all preceding phases. This keeps
-   * snapshots minimal — only fields that actually changed are stored.
+   * Capture the current visual state as a fully-explicit phase settings object.
+   * Every meaningful field is included at its actual value (no deltas); base-only
+   * fields and sequencer/runtime metadata are excluded.
    */
-  const captureSnapshot = (s: AppState): string => {
-    // Reconstruct the cumulative full state of the last existing phase
-    // by layering each phase's delta onto initialState in order.
-    let baseline: AppState = initialState;
-    for (const phase of s.sequencePhases) {
-      try {
-        const delta = JSON.parse(phase.snapshot) as Partial<AppState>;
-        baseline = { ...baseline, ...delta };
-      } catch { /* malformed phase — skip */ }
-    }
-
-    // Diff current visual state against baseline; skip non-visual fields
-    const delta: Record<string, unknown> = {};
-    (Object.keys(s) as (keyof AppState)[]).forEach(key => {
-      if (EXPORT_SKIP.has(key) || SEQUENCER_FIELDS.has(key)) return;
-      if (JSON.stringify(s[key]) !== JSON.stringify(baseline[key])) {
-        delta[key] = s[key];
-      }
+  const captureSettings = (s: AppState): Partial<AppState> => {
+    const out: Partial<AppState> = {};
+    (Object.keys(initialState) as (keyof AppState)[]).forEach(key => {
+      if (!isPhaseSetting(key)) return;
+      (out as Record<string, unknown>)[key] = s[key];
     });
-    return JSON.stringify(delta);
+    return out;
   };
 
   const generateId = (): string => {
@@ -447,12 +443,11 @@ export const ControlsPanel: React.FC<Props> = ({ state, updateState, isOpen, tog
   };
 
   const handleAddPhase = () => {
-    const snapshot = captureSnapshot(state);
     const newPhase: SequencePhase = {
       id: generateId(),
       title: `Phase ${state.sequencePhases.length + 1}`,
       duration: 10,
-      snapshot,
+      settings: captureSettings(state),
       transitionType: 'linear',
       transitionDuration: 2,
     };
@@ -480,24 +475,14 @@ export const ControlsPanel: React.FC<Props> = ({ state, updateState, isOpen, tog
   };
 
   /**
-   * Apply a phase's fully-expanded look to the live state so the canvas shows
-   * exactly what that phase renders. Layers every delta from phase 0 through
-   * `index` onto initialState, then applies only the visual fields — sequencer
-   * metadata (phases, title, enabled, loop) is preserved untouched.
+   * Apply a phase's settings to the live state so the canvas shows exactly what
+   * that phase renders. Phases are fully explicit, so this is a direct apply;
+   * base-only fields and sequencer metadata are untouched (settings excludes them).
    */
   const handleApplyPhase = (index: number) => {
-    let merged: AppState = initialState;
-    for (let i = 0; i <= index; i++) {
-      try {
-        merged = { ...merged, ...(JSON.parse(state.sequencePhases[i].snapshot) as Partial<AppState>) };
-      } catch { /* malformed phase — skip */ }
-    }
-    const update: Partial<AppState> = {};
-    (Object.keys(merged) as (keyof AppState)[]).forEach(key => {
-      if (EXPORT_SKIP.has(key) || SEQUENCER_FIELDS.has(key)) return;
-      (update as Record<string, unknown>)[key] = merged[key];
-    });
-    updateState(update);
+    const settings = state.sequencePhases[index]?.settings;
+    if (!settings || typeof settings !== 'object') return;
+    updateState({ ...settings });
   };
 
   const handlePlaySequence = () => {
@@ -516,7 +501,7 @@ export const ControlsPanel: React.FC<Props> = ({ state, updateState, isOpen, tog
 
   /* ── Per-group resets ─────────────────────────────────────── */
 
-  const resetVisuals    = makeReset(['mode','arms','turns','curve','width','spiralMath','maxFps','taperStrength','armTaper','cellFalloff'], updateState);
+  const resetVisuals    = makeReset(['mode','arms','turns','curve','width','spiralMath','maxFps','taperStrength','armTaper','cellFalloff','afterimageEnabled','afterimageIntensity','afterimageDuration'], updateState);
   const resetCenterDot  = makeReset(['centerDotEnabled','centerDotRadius','centerDotColor'], updateState);
   const resetMotion     = makeReset(['rotationSpeed','direction','wobble','wobblePhase','wobbleSpeed'], updateState);
   const resetZoom       = makeReset(['zoomEnabled','zoomSpeed','zoomDirection','zoomMin','zoomMax','zoomEasing','zoomMode','rampZoomSpeed'], updateState);
@@ -692,13 +677,23 @@ export const ControlsPanel: React.FC<Props> = ({ state, updateState, isOpen, tog
 
       {/* ── Tabs ── */}
       <div className="tabs-header">
-        <button className={`tab-btn ${activeTab === 'settings'   ? 'active' : ''}`} onClick={() => setActiveTab('settings')}>Controls</button>
-        <button className={`tab-btn ${activeTab === 'sequencer'  ? 'active' : ''}`} onClick={() => setActiveTab('sequencer')}>Sequencer</button>
-        <button className={`tab-btn ${activeTab === 'data'       ? 'active' : ''}`} onClick={() => setActiveTab('data')}>Preset</button>
+        <button className={`tab-btn ${activeTab === 'settings'   ? 'active' : ''}`} onClick={() => switchTab('settings')}>Controls</button>
+        <button className={`tab-btn ${activeTab === 'sequencer'  ? 'active' : ''}`} onClick={() => switchTab('sequencer')}>Sequencer</button>
+        <button className={`tab-btn ${activeTab === 'data'       ? 'active' : ''}`} onClick={() => switchTab('data')}>Preset</button>
         {state.debugEnabled && (
-          <button className={`tab-btn ${activeTab === 'debug' ? 'active' : ''}`} onClick={() => setActiveTab('debug')}>Debug</button>
+          <button className={`tab-btn ${activeTab === 'debug' ? 'active' : ''}`} onClick={() => switchTab('debug')}>Debug</button>
         )}
       </div>
+
+      {isEditingPhase && activeTab === 'settings' && (
+        <div className="phase-edit-banner">
+          <span className="phase-edit-banner-text">
+            ✎ Editing <strong>Phase {editingPhaseIndex + 1}{editingPhaseTitle ? `: ${editingPhaseTitle}` : ''}</strong>
+            <span className="phase-edit-banner-sub">Changes apply to this phase, not the base preset.</span>
+          </span>
+          <button className="phase-edit-done" onClick={onExitPhaseEdit}>Done</button>
+        </div>
+      )}
 
       <div className="controls-groups">
 
@@ -801,15 +796,23 @@ export const ControlsPanel: React.FC<Props> = ({ state, updateState, isOpen, tog
                         </div>
                         <div className="phase-card-footer">
                           <button
+                            className="phase-apply-btn phase-edit-btn"
+                            onClick={() => startEditPhase(i)}
+                            disabled={state.sequencerPlaying}
+                            title="Edit this phase's visual settings on the Controls tab"
+                          >
+                            ✎ Edit
+                          </button>
+                          <button
                             className="phase-apply-btn"
                             onClick={() => handleApplyPhase(i)}
                             disabled={state.sequencerPlaying}
-                            title="Preview this phase's look — applies all settings up to and including this phase to the live canvas"
+                            title="Preview this phase's look — copies its settings onto the live base preset"
                           >
                             Set as current view
                           </button>
-                          <span style={{ fontSize: '0.65rem', color: '#666', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {phase.snapshot.length} bytes
+                          <span style={{ fontSize: '0.65rem', color: '#666', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginLeft: 'auto' }}>
+                            {Object.keys(phase.settings ?? {}).length} fields
                           </span>
                         </div>
                       </div>
@@ -1069,6 +1072,19 @@ export const ControlsPanel: React.FC<Props> = ({ state, updateState, isOpen, tog
                 info="How sharply arms thin toward the center. Higher = thinner, pointier core (helps on small/mobile screens); lower = fuller, rounder core (looks best on large desktop screens)." />
               <Slider label="Arm Taper"  value={state.armTaper} min={0}  max={100} step={1} unit="%" onChange={v => updateState({ armTaper: v })}
                 info="Fades out the outermost portion of each arm. Useful with the Eyes effect to hide arms that cross through the opposite eye." />
+              <label className="checkbox-item">
+                <input type="checkbox" checked={state.afterimageEnabled} onChange={e => updateState({ afterimageEnabled: e.target.checked })} />
+                Afterimage Bloom
+                <InfoTip text="Deliberately holds a faint, decaying ghost of recent frames so fast motion leaves trails — turns smear into a dial-able effect." />
+              </label>
+              {state.afterimageEnabled && (
+                <>
+                  <Slider label="Bloom Intensity" value={state.afterimageIntensity} min={0} max={100} step={1} unit="%" onChange={v => updateState({ afterimageIntensity: v })}
+                    info="How visible the accumulated ghost trail is when blended back in." />
+                  <Slider label="Bloom Duration" value={state.afterimageDuration} min={50} max={2000} step={10} unit="ms" onChange={v => updateState({ afterimageDuration: v })}
+                    info="Roughly how long it takes for the trail to fade out." />
+                </>
+              )}
             </div>
 
             {/* ── Audio ── */}

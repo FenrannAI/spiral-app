@@ -330,6 +330,11 @@ export const SpiralCanvas: React.FC<{ state: AppState }> = ({ state }) => {
   const offscreenRef    = useRef<HTMLCanvasElement[]>([]);
   // Single offscreen layer for the ribbon flat-composite prototype — re-used across frames.
   const flatLayerRef    = useRef<HTMLCanvasElement | null>(null);
+  // Afterimage Bloom: frameLayerRef holds the just-rendered frame (so it can be
+  // both shown and stamped into the trail buffer); trailLayerRef accumulates a
+  // decaying history of recent frames that gets blended back in for ghosting.
+  const frameLayerRef   = useRef<HTMLCanvasElement | null>(null);
+  const trailLayerRef   = useRef<HTMLCanvasElement | null>(null);
   // Global session clock — set on first frame, never reset. Foundation for future sync.
   const sessionStartRef  = useRef<number>(0);
   const frameCountRef    = useRef(0);
@@ -502,6 +507,34 @@ export const SpiralCanvas: React.FC<{ state: AppState }> = ({ state }) => {
     // sequences now — the old auto duty-cycle pulse has been removed.)
     const isFragmented = state.fragmentEnabled;
 
+    // ── Afterimage Bloom: render target setup ────────────────────────────────
+    // When enabled, the arms are drawn into a TRANSPARENT offscreen layer
+    // (frameLayer) rather than straight onto the bg-filled visible canvas. That
+    // arms-only image is then (a) composited to the canvas for the crisp present
+    // frame, and (b) stamped into a persistent feedback buffer (the trail) that
+    // is faded toward transparent each frame so older arm positions linger as a
+    // decaying ghost. Keeping the layer transparent (no bg fill) is essential —
+    // it's what lets past frames persist as distinct faded arms instead of being
+    // washed out by an opaque background every deposit.
+    const afterimageOn = state.afterimageEnabled;
+    let frameTarget: CanvasRenderingContext2D = ctx;
+    let frameLayer: HTMLCanvasElement | null = null;
+
+    if (afterimageOn) {
+      let fl = frameLayerRef.current;
+      if (!fl) { fl = document.createElement('canvas'); frameLayerRef.current = fl; }
+      if (fl.width !== physicalWidth || fl.height !== physicalHeight) {
+        fl.width = physicalWidth; fl.height = physicalHeight;
+      }
+      frameLayer = fl;
+      const flCtx = fl.getContext('2d')!;
+      flCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      flCtx.globalCompositeOperation = 'source-over';
+      flCtx.globalAlpha = 1;
+      flCtx.clearRect(0, 0, logicalWidth, logicalHeight);
+      frameTarget = flCtx;
+    }
+
     // ═════════════════════════════════════════════════════════════════════════
     // EYES RENDER — two side-by-side spirals with a per-eye separation mask
     // ═════════════════════════════════════════════════════════════════════════
@@ -511,9 +544,14 @@ export const SpiralCanvas: React.FC<{ state: AppState }> = ({ state }) => {
       const cellW = logicalWidth / EYES;
       const cyEye = logicalHeight / 2;
 
-      ctx.globalCompositeOperation = 'source-over';
-      ctx.fillStyle = bgColor;
-      ctx.fillRect(0, 0, logicalWidth, logicalHeight);
+      frameTarget.globalCompositeOperation = 'source-over';
+      // Only paint the opaque background when drawing straight to the visible
+      // canvas. With afterimage on, frameTarget is the transparent arms layer
+      // and must stay transparent so the trail buffer can persist past frames.
+      if (!afterimageOn) {
+        frameTarget.fillStyle = bgColor;
+        frameTarget.fillRect(0, 0, logicalWidth, logicalHeight);
+      }
 
       // Separation-mask geometry. Each eye is confined to a radial region centred
       // on its own eye centre. eyeSpread widens that region (more overlap toward
@@ -566,18 +604,22 @@ export const SpiralCanvas: React.FC<{ state: AppState }> = ({ state }) => {
         oCtx.fillStyle = mask;
         oCtx.fillRect(0, 0, logicalWidth, logicalHeight);
 
-        // Composite the finished, masked eye onto the canvas a single time.
-        ctx.globalCompositeOperation = isDarken ? 'screen' : 'multiply';
-        ctx.drawImage(oc, 0, 0, logicalWidth, logicalHeight);
+        // Composite the finished, masked eye onto the frame target a single time.
+        frameTarget.globalCompositeOperation = isDarken ? 'screen' : 'multiply';
+        frameTarget.drawImage(oc, 0, 0, logicalWidth, logicalHeight);
       }
 
     // ═════════════════════════════════════════════════════════════════════════
     // NORMAL RENDER — single full-canvas spiral
     // ═════════════════════════════════════════════════════════════════════════
     } else {
-      ctx.globalCompositeOperation = 'source-over';
-      ctx.fillStyle = bgColor;
-      ctx.fillRect(0, 0, logicalWidth, logicalHeight);
+      frameTarget.globalCompositeOperation = 'source-over';
+      // See eyes path: skip the bg fill when rendering into the transparent
+      // arms layer for the afterimage trail.
+      if (!afterimageOn) {
+        frameTarget.fillStyle = bgColor;
+        frameTarget.fillRect(0, 0, logicalWidth, logicalHeight);
+      }
 
       // Flat-layer composite: draw all arms onto a transparent offscreen with
       // source-over (overlaps paint once — no accumulation), then composite the
@@ -598,8 +640,61 @@ export const SpiralCanvas: React.FC<{ state: AppState }> = ({ state }) => {
       lCtx.strokeStyle = buildGradient(lCtx, centerX, centerY, effectiveRadius, activeColors, colorPhase);
       drawSpiralArms(lCtx, centerX, centerY, effectiveRadius, effectiveWidth, rotation, state, timeSec, 1.0, false, true);
 
-      ctx.globalCompositeOperation = isDarken ? 'screen' : 'multiply';
-      ctx.drawImage(layer, 0, 0, logicalWidth, logicalHeight);
+      frameTarget.globalCompositeOperation = isDarken ? 'screen' : 'multiply';
+      frameTarget.drawImage(layer, 0, 0, logicalWidth, logicalHeight);
+    }
+
+    // ── Afterimage Bloom: feedback-buffer trail ──────────────────────────────
+    // Classic accumulation-buffer ghosting. The trail buffer holds arms-only
+    // (transparent bg) content. Each frame we:
+    //   1) draw the bg + the crisp current arms to the visible canvas (the
+    //      normal look — untouched at intensity 0),
+    //   2) overlay the EXISTING trail (older arm positions, already faded) on
+    //      top at the user's intensity so recent motion reads as a ghost,
+    //   3) fade the trail toward transparent by a frame-rate-independent decay
+    //      derived from afterimageDuration, then stamp the current arms in at
+    //      full strength so they become the freshest (brightest) layer of the
+    //      ghost for subsequent frames.
+    // Because the trail is transparent-bg and faded multiplicatively, old arms
+    // linger as distinct, dimming copies spread across the rotation arc — a real
+    // trail, not a single coinciding frame.
+    if (afterimageOn && frameLayer) {
+      let trail = trailLayerRef.current;
+      if (!trail) { trail = document.createElement('canvas'); trailLayerRef.current = trail; }
+      if (trail.width !== physicalWidth || trail.height !== physicalHeight) {
+        trail.width = physicalWidth; trail.height = physicalHeight;
+      }
+      const tCtx = trail.getContext('2d')!;
+      tCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+      const blend = isDarken ? 'screen' : 'multiply';
+      const intensity = Math.min(100, Math.max(0, state.afterimageIntensity)) / 100;
+
+      // 1) Crisp present frame: opaque bg, then arms.
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = bgColor;
+      ctx.fillRect(0, 0, logicalWidth, logicalHeight);
+      ctx.globalCompositeOperation = blend;
+      ctx.drawImage(frameLayer, 0, 0, logicalWidth, logicalHeight);
+
+      // 2) Ghost: the existing (already-faded) trail of PAST arm positions.
+      ctx.globalAlpha = intensity;
+      ctx.drawImage(trail, 0, 0, logicalWidth, logicalHeight);
+      ctx.globalAlpha = 1;
+
+      // 3) Age the trail, then deposit the current arms at full strength.
+      // decay = fraction of the trail's alpha removed this frame so it falls to
+      // ~5% after roughly afterimageDuration seconds, independent of FPS.
+      const durationSec = Math.max(0.05, state.afterimageDuration / 1000);
+      const decay = Math.min(1, Math.max(0, 1 - Math.exp(-3 * deltaSec / durationSec)));
+      tCtx.globalCompositeOperation = 'destination-out';
+      tCtx.globalAlpha = decay;
+      tCtx.fillStyle = '#000000';
+      tCtx.fillRect(0, 0, logicalWidth, logicalHeight);
+      tCtx.globalCompositeOperation = 'source-over';
+      tCtx.globalAlpha = 1;
+      tCtx.drawImage(frameLayer, 0, 0, logicalWidth, logicalHeight);
     }
 
     // ── Apply hue rotation imperatively (no React re-render) ─────────────────

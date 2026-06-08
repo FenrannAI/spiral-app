@@ -37,7 +37,7 @@ interface Preset {
                                     #   archimedean: r = R·t (constant arm spacing; curve ignored)
                                     #   fermat:      r = R·√t (dense outer arms; curve ignored)
   armTaper?: number;                # 0-100 % of outer arm length that fades to transparent [Default: 0]
-  maxFps?: number;                  # 1-240 [Default: 144]
+  maxFps?: number;                  # 1-240 [Default: 144] — base-only: top level only, never inside a sequence phase's settings
 
   # ── Motion ────────────────────────────────────────────────────────────────
   rotationSpeed?: number;           # 0-20 [Default: 1]

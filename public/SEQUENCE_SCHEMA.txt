@@ -7,8 +7,11 @@ Generates a complete multi-phase animation journey.
 type Transition = "linear" | "ease" | "pulse" | "spinBurst" | "fragment" | "inversionPulse";
 
 interface Sequence {
+  # ── Top-level / base-only fields (never inside a phase's settings) ──────────
   sequenceTitle: string;            # Name of this sequence journey
   sequencerLoop?: boolean;          # Loop back to Phase 1 [Default: true]
+  sequencerEnabled?: boolean;       # Optional; set true to auto-arm on import
+  maxFps?: number;                  # Optional base-only; 1–240 [Default: 144]
   sequencePhases: Phase[];          # Sequence steps in chronological order
 }
 
@@ -21,17 +24,19 @@ interface Phase {
                                     #   ease      — slow-fast-slow
                                     #   pulse     — overshoots target then settles
                                     #   spinBurst — ease + extra rotation surge
-                                    #   fragment  — ease + temporary grid surge overlay
+                                    #   fragment  — ease + brings the Eyes effect in with a phase-offset surge
                                     #   inversionPulse — ease + full-screen inversion that
                                     #                flashes faster and faster (500ms→50ms)
                                     #                across the transition, overriding the
                                     #                normal inversion pulse until it completes
   transitionDuration?: number;      # Transition time in seconds [Default: 2]
 
-  # snapshot MUST be a valid JSON-stringified object containing partial
-  # properties that dynamically shift relative to app defaults.
-  # Escaped JSON string pattern: "{\"rotationSpeed\": 1, \"color1\": \"#ffffff\"}"
-  snapshot: string;
+  # settings is a REAL nested JSON object (NOT a string) holding this phase's
+  # visual fields — any per-phase preset key (everything except the base-only
+  # fields above). It is SELF-CONTAINED: include the fields you want this phase
+  # to set; omitted fields use their DEFAULTS, never the previous phase's value.
+  # No escaping, no deltas, no inheritance.
+  settings: object;
 }
 
 # ── HOW TRANSITIONS WORK ─────────────────────────────────────────────────────
@@ -51,7 +56,7 @@ interface Phase {
 #
 # STRUCTURE (snapped at end of transition; never lerped)
 #   arms, direction, gradientType, textAnimation, mode, spiralMath, colorMode,
-#   kaleidoscopeSectors, strobeColorCount, maxFps, rampMode,
+#   kaleidoscopeSectors, strobeColorCount, rampMode,
 #   fragmentDirectionMode, vignetteShape,
 #   audioBeatMode, audioWaveform, audioDroneInterval, audioNoiseType,
 #   lockColorCyclingRatio, lockHueRotateRatio, lockStrobeRatio,
@@ -62,7 +67,7 @@ interface Phase {
 #
 # SNAP (applied instantly at phase start)
 #   textEnabled, flashEnabled, intenseFlash, pulseSpeed, randomOrder,
-#   debugEnabled, centerDotEnabled, all ramp*Speed toggles,
+#   centerDotEnabled, all ramp*Speed toggles,
 #   inversionEnabled, fragmentEnabled (Eyes),
 #   vignetteEnabled,
 #   audioEnabled, audioToneEnabled, audioDroneEnabled, audioNoiseEnabled,
@@ -76,17 +81,19 @@ interface Phase {
 #   strobeColor1, strobeColor2, strobeColor3,
 #   vignetteColor
 
-# ── DELTA FORMAT ─────────────────────────────────────────────────────────────
-# Phase snapshots use a DELTA format — only include fields that change relative
-# to the previous phase (or relative to app defaults for Phase 1).
-# Missing fields are inherited from the previous phase's fully-expanded state.
-# This keeps sequences compact and AI-token-efficient.
+# ── SELF-CONTAINED PHASE FORMAT ──────────────────────────────────────────────
+# Each phase's `settings` is a plain nested JSON object and stands on its own.
+# Include the fields you want THIS phase to set; any field you omit takes its
+# DEFAULT value — it does NOT inherit from the previous phase. There is no
+# delta, no carry-over, no escaping.
 #
-# Color fields follow the same rule: only include a color key if it changes.
-# The player interpolates colors falling back to the previous phase's value
-# for any omitted color field.
+# To keep a look or animate a value across phases, repeat the relevant fields in
+# every phase. A MOTION or COLOR field only glides during a transition if BOTH
+# the phase you leave and the phase you enter specify it — otherwise the missing
+# side is its default. (E.g. to fade color1 across two phases, set color1 in both.)
 #
-# Example: if color1 is the same across all phases, omit it from every snapshot.
+# Base-only fields (maxFps) and sequencer metadata (sequencerEnabled,
+# sequenceTitle, sequencerLoop) belong only at the top level — never in settings.
 
 # ── PHOTOSENSITIVITY NOTE ────────────────────────────────────────────────────
 # All users are presented with a full photosensitivity and hypnotic-effects
@@ -112,20 +119,23 @@ interface Phase {
 OUTPUT CONSTRAINTS:
 1. Return ONLY a single raw valid JSON object.
 2. Do not wrap in markdown or add explanations.
-3. Fully escape nested JSON strings inside the "snapshot" elements.
-4. Snapshots are DELTAS — include a field (colors included) ONLY when it changes
-   from the previous phase (or, for Phase 1, from the app defaults). Omitted
-   colors automatically inherit the previous phase's value; you do NOT need to
-   repeat all 9 colors in every phase.
-5. Use spiralMath to choose the curve formula.
+3. Every "settings" is a REAL nested JSON object — never an escaped string.
+4. Each phase is SELF-CONTAINED: include the fields you want it to set; omitted
+   fields use their defaults, NOT the previous phase's value. Repeat fields you
+   want to persist or animate across phases.
+5. Do not put base-only fields (maxFps, sequencerEnabled, sequenceTitle,
+   sequencerLoop) inside a phase's settings.
+6. Use spiralMath to choose the curve formula.
 
 # ── EXAMPLE: Theta-band relaxation journey with audio and mirror eyes ───────
-# Note the DELTA style: Phase 1 omits every color because its palette equals the
-# app defaults; "descend" includes only the 3 colors it actually changes; "mirror"
-# repeats no colors at all (they carry over) and only lists the fields it alters.
+# Each phase's `settings` is a real nested object and lists everything it needs.
+# "descend" and "mirror" restate the palette and core spiral fields because they
+# do not carry over from the prior phase. "open" omits the colors, so it uses the
+# default palette.
 {
   "sequenceTitle": "Mirror Descent",
   "sequencerLoop": true,
+  "sequencerEnabled": true,
   "sequencePhases": [
     {
       "id": "open",
@@ -133,7 +143,12 @@ OUTPUT CONSTRAINTS:
       "duration": 12,
       "transitionType": "ease",
       "transitionDuration": 3,
-      "snapshot": "{\"spiralMath\":\"power\",\"arms\":6,\"turns\":2,\"curve\":3,\"rotationSpeed\":0.5,\"direction\":1,\"audioEnabled\":true,\"audioVolume\":30,\"audioBeatMode\":\"binaural\",\"audioCarrierFreq\":300,\"audioBeatFreq\":10,\"audioWaveform\":\"sine\"}"
+      "settings": {
+        "spiralMath": "power", "arms": 6, "turns": 2, "curve": 3,
+        "rotationSpeed": 0.5, "direction": 1,
+        "audioEnabled": true, "audioVolume": 30, "audioBeatMode": "binaural",
+        "audioCarrierFreq": 300, "audioBeatFreq": 10, "audioWaveform": "sine"
+      }
     },
     {
       "id": "descend",
@@ -141,7 +156,17 @@ OUTPUT CONSTRAINTS:
       "duration": 20,
       "transitionType": "ease",
       "transitionDuration": 8,
-      "snapshot": "{\"spiralMath\":\"log\",\"turns\":3,\"curve\":2.5,\"rotationSpeed\":0.25,\"direction\":-1,\"color1\":\"#1a0033\",\"color2\":\"#330066\",\"color3\":\"#000022\",\"vignetteEnabled\":true,\"vignetteIntensity\":75,\"vignetteSize\":40,\"audioCarrierFreq\":220,\"audioBeatFreq\":6,\"audioDroneEnabled\":true,\"audioDroneInterval\":\"octave\",\"audioDroneLevel\":35,\"audioNoiseEnabled\":true,\"audioNoiseType\":\"brown\",\"audioNoiseLevel\":30,\"audioTremoloRate\":0.25,\"audioTremoloDepth\":20}"
+      "settings": {
+        "spiralMath": "log", "arms": 6, "turns": 3, "curve": 2.5,
+        "rotationSpeed": 0.25, "direction": -1,
+        "color1": "#1a0033", "color2": "#330066", "color3": "#000022",
+        "vignetteEnabled": true, "vignetteIntensity": 75, "vignetteSize": 40,
+        "audioEnabled": true, "audioBeatMode": "binaural",
+        "audioCarrierFreq": 220, "audioBeatFreq": 6,
+        "audioDroneEnabled": true, "audioDroneInterval": "octave", "audioDroneLevel": 35,
+        "audioNoiseEnabled": true, "audioNoiseType": "brown", "audioNoiseLevel": 30,
+        "audioTremoloRate": 0.25, "audioTremoloDepth": 20
+      }
     },
     {
       "id": "mirror",
@@ -149,7 +174,20 @@ OUTPUT CONSTRAINTS:
       "duration": 30,
       "transitionType": "fragment",
       "transitionDuration": 6,
-      "snapshot": "{\"rotationSpeed\":0.2,\"fragmentEnabled\":true,\"fragmentDirectionMode\":\"mirror\",\"fragmentPhaseOffset\":120,\"eyeSpread\":50,\"eyeSoftness\":65,\"armTaper\":35,\"vignetteIntensity\":80,\"vignetteSize\":35,\"vignetteSoftness\":70}"
+      "settings": {
+        "spiralMath": "log", "arms": 6, "turns": 3, "curve": 2.5,
+        "rotationSpeed": 0.2, "direction": -1,
+        "color1": "#1a0033", "color2": "#330066", "color3": "#000022",
+        "fragmentEnabled": true, "fragmentDirectionMode": "mirror",
+        "fragmentPhaseOffset": 120, "eyeSpread": 50, "eyeSoftness": 65,
+        "armTaper": 35,
+        "vignetteEnabled": true, "vignetteIntensity": 80, "vignetteSize": 35, "vignetteSoftness": 70,
+        "audioEnabled": true, "audioBeatMode": "binaural",
+        "audioCarrierFreq": 220, "audioBeatFreq": 6,
+        "audioDroneEnabled": true, "audioDroneInterval": "octave", "audioDroneLevel": 35,
+        "audioNoiseEnabled": true, "audioNoiseType": "brown", "audioNoiseLevel": 30,
+        "audioTremoloRate": 0.25, "audioTremoloDepth": 20
+      }
     }
   ]
 }

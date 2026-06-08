@@ -45,15 +45,17 @@ Infer from context when obvious; only ask if genuinely unclear:
 Follow all constraints in `references/schema.md`. Key rules:
 
 - Every **hex color** must match `#[0-9a-fA-F]{6}` exactly — no spaces, no shorthand.
-- Presets: include only fields that shift from defaults.
-- Sequence snapshots are **escaped JSON strings**, not objects: `"{\"key\":\"val\"}"`.
-- Sequence snapshots use **full delta format, colors included** — include any field (color or otherwise) only when it changes vs. the previous phase (or vs. app defaults for phase 1). Omitted fields inherit the previous phase's value. Do not repeat unchanged colors.
+- **Everything is plain nested JSON — no escaped strings anywhere.** A phase's settings are a real object, not a stringified blob.
+- **Each preset and each phase is self-contained:** include the fields you want to set; any field you omit takes its **default** value. Phases do **NOT** inherit from the previous phase — there is no delta/carry-over. Two phases that should look different must each spell out the fields that differ from defaults.
+- **Base-only fields** (`maxFps`, and the sequencer metadata `sequencerEnabled` / `sequenceTitle` / `sequencerLoop`) live only at the **top level**, never inside a phase's `settings`.
 - Ranges to respect: `curve` 0.1–10, `arms` 1–30, `turns` 0.1–10, `width` 1–100. `intenseStrobeDelay`/`strobeLength` min 5 ms. `lineSpeed`/`lineTime` 100–1000 ms. `inversionRate`/`inversionDuration` are **seconds**.
 - Use `spiralMath` to choose the curve formula. Do **not** emit `spiralRenderMode`, any zoom field, or any removed grid-fragment field (`fragmentCols`, `fragmentRows`, `fragmentRenderMode`, `fragmentBorder*`, `fragmentAutoPulse`, `fragmentDutyCycle`, `fragmentPulseRate`, `cellFalloff`, `rampFragmentPulse`).
 
 ### Step 3 — Self-validate before outputting
 - [ ] All hex colors valid `#rrggbb`, no typos
-- [ ] Sequence: all fields are deltas (colors included — omit any unchanged value); snapshots are valid escaped JSON strings
+- [ ] No escaped JSON strings anywhere — every phase's `settings` is a real nested object
+- [ ] Each phase is self-contained vs. defaults (no inheritance from the previous phase); fields that should differ between phases are spelled out in each
+- [ ] No base-only field (`maxFps`, `sequencerEnabled`, `sequenceTitle`, `sequencerLoop`) appears inside a phase's `settings`
 - [ ] All numeric fields within documented ranges and current defaults
 - [ ] `spiralMath` used; no `spiralRenderMode`, zoom, or removed grid-fragment fields
 - [ ] Master Tempo enabled + relevant locks set when >1 rhythmic effect is active
@@ -82,12 +84,13 @@ These changed in recent versions — use them as the baseline:
 
 ## Sequence design tips
 
-- **Snapshots**: full delta format — include any field, colors included, only when it changes from the previous phase (or defaults for phase 1). Unchanged colors carry over automatically; never repeat them.
-- Transition choice: `"ease"` for smooth flow, `"spinBurst"` for dramatic mood changes, `"fragment"` when bringing the Eyes effect in/out, `"inversionPulse"` for an accelerating full-screen inversion descent.
+- **Phase `settings`**: each is a self-contained nested object. Include every field you want that phase to set; omitted fields fall back to **defaults**, not the previous phase. To carry a look across phases, repeat the relevant fields in each phase.
+- Transition choice: `"ease"` for smooth flow, `"spinBurst"` for dramatic mood changes, `"fragment"` when bringing the Eyes effect in with a phase-offset surge, `"inversionPulse"` for an accelerating full-screen inversion descent.
 - Make phases evolve dramatically: shift `spiralMath`, swing `direction`, bring Eyes in and out, deepen the vignette, ramp the speed, move audio bands across the journey.
 - Lock multi-rhythm phases to Master Tempo so the whole scene pulses on one beat.
 - For 2 min (120s): ~5 phases of 24s. For 3 min: ~6 phases of 30s. `transitionDuration` 2–4s typical; 6–10s for deep descent phases.
 - Audio fields are MOTION (interpolated), so drift `audioCarrierFreq`/`audioBeatFreq` across phases for a frequency-following journey. Structural fields (`spiralMath`, `audioBeatMode`, `fragmentDirectionMode`, `vignetteShape`) snap at end of transition — plan order accordingly.
+- A field that interpolates (MOTION/COLOR) only animates if both the phase you leave and the phase you enter specify it; since phases are self-contained, set such fields in every phase you want them to glide across.
 - If `sequencerLoop: true`, make the last phase loop smoothly back to phase 1.
 
 ### Tell the user how to run a sequence

@@ -19,7 +19,10 @@ export type SequencePhase = {
   id: string;
   title: string;
   duration: number; // seconds to hold this phase
-  snapshot: string; // JSON of visual params for this phase
+  // Fully-explicit visual settings for this phase, as a nested object (no
+  // escaped JSON string, no deltas). Excludes base-only fields (maxFps,
+  // highQuality, debugEnabled) and sequencer/runtime metadata.
+  settings: Partial<AppState>;
   transitionType: TransitionType;
   transitionDuration: number; // seconds for the transition into this phase
 };
@@ -152,6 +155,13 @@ export type AppState = {
   // Center Taper — how sharply arm width thins toward the centre (width exponent).
   // 0 = full/round core, 100 = thin/pointy core (≈ original linear taper).
   taperStrength: number;
+  // Afterimage Bloom — deliberately retains a faint, decaying ghost of recent
+  // frames so fast motion leaves trails. intensity controls how visible the
+  // accumulated ghost is when blended back in; duration controls how long
+  // (in ms) it takes to fade out.
+  afterimageEnabled: boolean;
+  afterimageIntensity: number;       // 0–100: opacity of the accumulated trail
+  afterimageDuration: number;        // 50–2000 ms: approx. fade-out time
   // Arm Taper
   armTaper: number;                  // 0–100%: outer fraction of each arm that fades to transparent
   // Cell Falloff (fragmentation blend mode)
@@ -305,6 +315,9 @@ export const initialState: AppState = {
   hueRotation: 0,
   hueRotateSpeed: 0,
   taperStrength: 85,
+  afterimageEnabled: false,
+  afterimageIntensity: 50,
+  afterimageDuration: 300,
   armTaper: 0,
   cellFalloff: 0,
   eyeSpread: 55,

@@ -34,8 +34,8 @@ Use STROBE_FLICKER as a base but:
 - Use only a single color (red)
 ```
 
-### Method 3: Snapshot Comparison
-Load a pattern's values manually, then click "Copy Delta JSON" to see what actually differs from your current state. Use this to understand what variables are driving a visual effect.
+### Method 3: Export Comparison
+Load a pattern's values manually, then use the Preset tab's "Copy String" to export the full state and compare. Use this to understand which variables drive a visual effect.
 
 ## Available Patterns
 
