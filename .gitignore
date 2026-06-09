@@ -31,3 +31,6 @@ yarn-error.log*
 # Misc
 *.tsbuildinfo
 *.tsbuildinfo.*
+
+# Archived documentation (kept locally, not tracked)
+docs-archive/

@@ -44,6 +44,104 @@
   z-index: 15;
 }
 
+/* ===== RSVP (one word at a time, no entrance animation — swaps in place) ===== */
+.text-rsvp {
+  animation: none;
+  opacity: 1;
+}
+
+/* RSVP focal-letter anchoring: a 3-column grid (before | focal | after) keeps the
+   highlighted letter pinned to the exact horizontal centre, so it doesn't jitter
+   between positions as words of different lengths recentre. */
+.text-rsvp-orp {
+  display: grid;
+  grid-template-columns: 1fr min-content 1fr;
+  align-items: center;
+  width: 100%;
+  white-space: nowrap;
+}
+.text-rsvp-orp .rsvp-before { justify-self: end; }
+.text-rsvp-orp .rsvp-after  { justify-self: start; }
+
+/* ===== Solid phrase (lineTime >= lineSpeed): static, no entrance animation ===== */
+.text-solid {
+  animation: none;
+  opacity: 1;
+}
+
+/* ===== Highlight (all words as a static field with a moving highlight) ===== */
+.text-wall {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4em;
+  max-width: 90%;
+  padding: 1rem;
+  z-index: 15;
+  font-size: calc(clamp(1rem, 4vw, 2.4rem) * var(--text-size-mult, 1));
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.15rem;
+  text-align: center;
+}
+
+/* ===== Wall (words randomised + repeated to cover the whole frame) ===== */
+/* A single wrapping text node — one DOM element, native word-wrap, so each
+   regeneration is a cheap text swap rather than hundreds of elements. */
+.text-wall-grid {
+  position: absolute;
+  /* Oversize the wall to 200% and recenter (-50%) so the text bleeds past every
+     edge of the frame instead of showing a centred, ragged-edged box. The
+     overflow is clipped by the parent .text-overlay-container (overflow:hidden). */
+  width: 200%;
+  height: 200%;
+  top: -50%;
+  left: -50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.4rem;
+  overflow: hidden;
+  /* Isolate the wall's relayout/repaint from the rest of the page so the
+     once-per-cycle text regeneration doesn't stall other rendering. */
+  contain: layout paint style;
+  z-index: 15;
+  user-select: none;
+  pointer-events: none;
+}
+
+.text-wall-text {
+  width: 100%;
+  /* Centred with EVEN word spacing. We deliberately avoid justify here: justify
+     stretches the spaces to fill each line, which makes gaps between phrases
+     uneven. The large font below makes lines wider than the frame so they bleed
+     past both edges — so centring still fills the screen without a thin column. */
+  text-align: center;
+  /* Large, viewport-relative font: big enough that the words overflow the frame
+     and bleed past every edge (the parent clips them), filling the screen on
+     mobile instead of occupying a thin centred strip. Scaled by Text Size. */
+  font-size: calc(clamp(1.8rem, 6vw, 3.4rem) * var(--text-size-mult, 1));
+  font-weight: bolder;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  line-height: 0.9;
+  word-break: break-word;
+  /* No text-shadow here on purpose: a blurred shadow over a full-screen wall of
+     text is an extremely expensive repaint and caused the per-cycle hitch. */
+}
+
+/* Highlight mode lays words out inline so a single sweep can move through them. */
+.text-highlight {
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 0.35em 0.5em;
+}
+
+.text-highlight-word {
+  transition: color 0.15s linear, opacity 0.15s linear, text-shadow 0.15s linear;
+}
+
 /* ===== Fade (default) ===== */
 .text-anim-fade {
   animation: fadeInOut ease-in-out forwards;

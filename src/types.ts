@@ -7,6 +7,18 @@ export type VignetteShape = 'ellipse' | 'circle';
 // Mathematical form of the spiral curve (replaces the render-mode selector in the UI)
 export type SpiralMath = 'power' | 'log' | 'archimedean' | 'fermat';
 
+// Geometry of the figure.
+//   spiral             — classic winding arms (circular)
+//   polygon            — winding arms warped to an N-gon, expanded to fill screen
+//   concentricCircle   — nested filled rings (bullseye)
+//   concentricPolygon  — nested filled N-gon bands
+// The 'concentric*' forms draw closed nested loops instead of spiralling arms.
+export type SpiralShape =
+  | 'spiral'
+  | 'polygon'
+  | 'concentricCircle'
+  | 'concentricPolygon';
+
 export type TransitionType = 'linear' | 'ease' | 'pulse' | 'spinBurst' | 'fragment' | 'inversionPulse';
 
 // Eyes direction: 'uniform' both spin the same way; 'alternating' opposite ways;
@@ -14,6 +26,54 @@ export type TransitionType = 'linear' | 'ease' | 'pulse' | 'spinBurst' | 'fragme
 export type FragmentDirectionMode = 'uniform' | 'alternating' | 'mirror';
 // Retained for saved-state compatibility only — rendering no longer branches on it.
 export type FragmentRenderMode   = 'clip' | 'blend' | 'feather';
+
+// Compositing mode for the optional second spiral layer.
+export type LayerBlendMode = 'screen' | 'multiply' | 'lighten' | 'normal';
+
+// How a background image is fitted to the canvas.
+//   cover   — fill canvas, preserve aspect, crop overflow
+//   contain — fit entirely inside canvas, preserve aspect (may letterbox)
+//   stretch — fill exactly, ignore aspect (may distort)
+//   tile    — repeat at native size to fill
+//   center  — single copy at native size, centred
+export type BgFillMode = 'cover' | 'contain' | 'stretch' | 'tile' | 'center';
+
+// A self-contained copy of the per-spiral *visual* fields, used by the optional
+// second spiral layer. Global/effect fields (vignette, audio, strobe, text,
+// tempo, hue) stay at the top level and are NOT duplicated here.
+export type SecondarySpiral = {
+  arms: number;
+  turns: number;
+  curve: number;
+  width: number;
+  rotationSpeed: number;
+  direction: 1 | -1;
+  wobble: number;
+  wobblePhase: number;
+  wobbleSpeed: number;
+  spiralMath: SpiralMath;
+  shape: SpiralShape;
+  polygonSides: number;
+  concentricTwist: number;
+  colorMode: ColorMode;
+  kaleidoscopeSectors: number;
+  gradientType: 'Single' | 'Two' | 'Three';
+  color1: string;
+  color2: string;
+  color3: string;
+  taperStrength: number;
+  armTaper: number;
+  // When true, the second spiral ignores the global speed ramp (Pulse) and spins
+  // at its own constant rate even while the primary spiral ramps.
+  ignoreRamp: boolean;
+  // Independent Afterimage Bloom for the second spiral. When enabled, the second
+  // spiral gets its OWN decaying trail (separate buffers + settings) instead of
+  // being folded into the primary spiral's bloom.
+  afterimageEnabled: boolean;
+  afterimageIntensity: number;   // 0–100
+  afterimageDuration: number;    // 50–2000 ms
+  afterimageHold: number;        // 0–500 ms
+};
 
 export type SequencePhase = {
   id: string;
@@ -37,6 +97,13 @@ export type ColorMode = 'default' | 'static' | 'kaleidoscopic';
 
 export type TextAnimation = 'fade' | 'flash' | 'pulse';
 
+// Text display mode.
+//   phrase    — one line at a time, cycled (the classic behaviour)
+//   rsvp      — Rapid Serial Visual Presentation: one WORD at a time, WPM-paced
+//   wall      — all phrases shown at once as a static dimmed field
+//   highlight — all words shown dimmed, a bright highlight sweeping through them
+export type TextMode = 'phrase' | 'rsvp' | 'wall' | 'highlight';
+
 // ── Master Tempo ─────────────────────────────────────────────────
 /** Integer ratio of an effect's rate to the master BPM. Values < 1 are slower; > 1 are faster. */
 export type TempoRatio = '1/8' | '1/4' | '1/2' | '1' | '2' | '4' | '8';
@@ -49,6 +116,14 @@ export type AudioNoiseType     = 'white' | 'pink' | 'brown';
 
 export type AppState = {
   mode: 'Lighten' | 'Darken';
+  // ── Background image ──────────────────────────────────────────────────────
+  // Optional image loaded by URL that replaces the solid background; the spiral
+  // blends over it via the usual Darken/Lighten compositing.
+  bgImageEnabled: boolean;
+  bgImageUrl: string;
+  bgImageFill: BgFillMode;
+  bgImageDim: number;   // 0–100 — fades the image toward the background colour
+  bgImageBlur: number;  // 0–50 px blur
   arms: number;
   turns: number;
   curve: number;
@@ -71,6 +146,16 @@ export type AppState = {
   lineTime: number;
   textSize: number; // multiplier 0.5–3.0
   textAnimation: TextAnimation;
+  // ── Text display mode + per-mode options ──────────────────────────────────
+  textMode: TextMode;
+  wpm: number;                // 60–700 — RSVP pacing (words per minute)
+  rsvpOrp: boolean;           // RSVP: highlight the optimal-recognition-point letter
+  rsvpAnchor: boolean;        // RSVP: pin the ORP letter to screen centre (vs inline)
+  wallOpacity: number;        // 0–100 — per-phrase alpha in 'wall' mode
+  wallDensity: number;        // 20–400 — number of words packed into the wall
+  highlightColor: string;     // hex — sweep colour in 'highlight' mode
+  highlightSweepSpeed: number;// 0.5–12 words/sec — highlight advance rate
+  customFontName: string;     // Google Fonts family name ('' = app default font)
   // Flash
   flashEnabled: boolean;
   flashColor: string;
@@ -104,6 +189,19 @@ export type AppState = {
   spiralRenderMode: SpiralRenderMode;
   // Spiral mathematics — controls the radial growth curve
   spiralMath: SpiralMath;
+  // Geometry / shape of each arm. 'spiral' keeps the classic look; the others
+  // warp the angular mapping into nested polygons / roses / hearts.
+  shape: SpiralShape;
+  polygonSides: number;   // 3–12 — sides for 'polygon' / 'concentricPolygon'
+  concentricTwist: number; // 0–1 — how much rings rotate relative to each other (concentricPolygon only)
+  // ── Second spiral layer ───────────────────────────────────────────────────
+  // An optional second spiral composited over the primary one. Its own spiral
+  // visual fields live in the `secondary` sub-object so the global effect fields
+  // (vignette, audio, text, tempo, hue…) are shared and not duplicated.
+  secondaryEnabled: boolean;
+  secondaryBlendMode: LayerBlendMode;
+  secondaryOpacity: number;       // 0–100
+  secondary: SecondarySpiral;
   // Random order for phrases
   randomOrder: boolean;
   // Debug panel toggle
@@ -162,6 +260,9 @@ export type AppState = {
   afterimageEnabled: boolean;
   afterimageIntensity: number;       // 0–100: opacity of the accumulated trail
   afterimageDuration: number;        // 50–2000 ms: approx. fade-out time
+  afterimageHold: number;            // 0–500 ms: hold each frame this long before
+                                     // capturing the next (0 = every frame; >0 gives
+                                     // a stop-motion / hitched look)
   // Arm Taper
   armTaper: number;                  // 0–100%: outer fraction of each arm that fades to transparent
   // Cell Falloff (fragmentation blend mode)
@@ -233,6 +334,11 @@ export type AppState = {
 
 export const initialState: AppState = {
   mode: 'Darken',
+  bgImageEnabled: false,
+  bgImageUrl: '',
+  bgImageFill: 'cover',
+  bgImageDim: 0,
+  bgImageBlur: 0,
   arms: 6,
   turns: 3,
   curve: 4.5,
@@ -255,6 +361,15 @@ export const initialState: AppState = {
   lineTime: 400,
   textSize: 1,
   textAnimation: 'fade',
+  textMode: 'phrase',
+  wpm: 300,
+  rsvpOrp: false,
+  rsvpAnchor: true,
+  wallOpacity: 35,
+  wallDensity: 200,
+  highlightColor: '#ffdd00',
+  highlightSweepSpeed: 3,
+  customFontName: '',
   flashEnabled: false,
   flashColor: '#ffffff',
   flashIntensity: 50,
@@ -280,6 +395,40 @@ export const initialState: AppState = {
   centerDotColor: '#ffffff',
   spiralRenderMode: 'butt',
   spiralMath: 'log',
+  shape: 'spiral',
+  polygonSides: 5,
+  concentricTwist: 0.6,
+  secondaryEnabled: false,
+  secondaryBlendMode: 'screen',
+  secondaryOpacity: 70,
+  secondary: {
+    arms: 3,
+    turns: 3,
+    curve: 4.5,
+    width: 40,
+    rotationSpeed: 0.6,
+    direction: 1,
+    wobble: 0.1,
+    wobblePhase: 0,
+    wobbleSpeed: 1,
+    spiralMath: 'log',
+    shape: 'spiral',
+    polygonSides: 5,
+    concentricTwist: 0.6,
+    colorMode: 'default',
+    kaleidoscopeSectors: 8,
+    gradientType: 'Two',
+    color1: '#00ffcc',
+    color2: '#0055ff',
+    color3: '#ff0055',
+    taperStrength: 85,
+    armTaper: 0,
+    ignoreRamp: false,
+    afterimageEnabled: false,
+    afterimageIntensity: 50,
+    afterimageDuration: 300,
+    afterimageHold: 0,
+  },
   randomOrder: false,
   debugEnabled: false,
   colorMode: 'default',
@@ -318,6 +467,7 @@ export const initialState: AppState = {
   afterimageEnabled: false,
   afterimageIntensity: 50,
   afterimageDuration: 300,
+  afterimageHold: 0,
   armTaper: 0,
   cellFalloff: 0,
   eyeSpread: 55,

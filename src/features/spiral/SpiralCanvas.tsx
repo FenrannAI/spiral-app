@@ -1,9 +1,47 @@
-import React, { useRef } from 'react';
+import React, { useRef, useEffect } from 'react';
 import './SpiralCanvas.css';
-import { AppState } from '../../types';
+import { AppState, BgFillMode } from '../../types';
 import { useAnimationFrame } from '../../utils/hooks';
 import { lerpColor, computeSpeedRampFactor } from '../../utils/color';
 import { debugStore } from '../../utils/debugStore';
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * drawImageFill — draw `img` into a W×H area using the chosen fill mode.
+ * Used to bake the background image into its offscreen cache.
+ * ───────────────────────────────────────────────────────────────────────────── */
+function drawImageFill(
+  g: CanvasRenderingContext2D,
+  img: CanvasImageSource, iw: number, ih: number,
+  mode: BgFillMode, W: number, H: number,
+): void {
+  if (iw <= 0 || ih <= 0) return;
+  switch (mode) {
+    case 'stretch':
+      g.drawImage(img, 0, 0, W, H);
+      break;
+    case 'center':
+      g.drawImage(img, (W - iw) / 2, (H - ih) / 2, iw, ih);
+      break;
+    case 'tile': {
+      const pat = g.createPattern(img as CanvasImageSource, 'repeat');
+      if (pat) { g.fillStyle = pat; g.fillRect(0, 0, W, H); }
+      break;
+    }
+    case 'contain': {
+      const s = Math.min(W / iw, H / ih);
+      const dw = iw * s, dh = ih * s;
+      g.drawImage(img, (W - dw) / 2, (H - dh) / 2, dw, dh);
+      break;
+    }
+    case 'cover':
+    default: {
+      const s = Math.max(W / iw, H / ih);
+      const dw = iw * s, dh = ih * s;
+      g.drawImage(img, (W - dw) / 2, (H - dh) / 2, dw, dh);
+      break;
+    }
+  }
+}
 
 /* ─────────────────────────────────────────────────────────────────────────────
  * buildGradient
@@ -84,6 +122,52 @@ function computeSpiralDR(
       return radius * c * Math.pow(Math.max(t, 1e-9), c - 1);
     }
   }
+}
+
+type BaseShape = 'circle' | 'polygon';
+
+// Maps a concentric* shape value to its underlying base outline.
+function concentricBase(shape: AppState['shape']): BaseShape | null {
+  switch (shape) {
+    case 'concentricCircle':  return 'circle';
+    case 'concentricPolygon': return 'polygon';
+    default:                  return null;
+  }
+}
+
+function isConcentricShape(shape: AppState['shape']): boolean {
+  return concentricBase(shape) !== null;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * shapePoint — a point on a base outline at "radius" r, drawn at angle `theta`
+ * around the centre, with the shape oriented by `rot`. Used by the concentric
+ * renderer to trace each nested loop.
+ *   circle  — exact circle of radius r (rotation-invariant)
+ *   polygon — regular N-gon whose corners sit on radius r
+ *
+ * IMPORTANT: the drawing angle (`theta`, where the point is placed) and the
+ * orientation (`rot`, which way the polygon faces) must stay decoupled. The
+ * polygon's radius warp is measured from `theta - rot`, while the point is
+ * placed at `theta`. If both used the same angle, sweeping `theta` over a full
+ * turn would trace the identical closed outline for every `rot` — i.e. the
+ * polygon would never actually rotate, only its starting sample point would
+ * shift (visible as jitter on the corners).
+ * ───────────────────────────────────────────────────────────────────────────── */
+function shapePoint(
+  shape: BaseShape, r: number, theta: number, rot: number,
+  polygonSides: number,
+): { x: number; y: number } {
+  const ct = Math.cos(theta), st = Math.sin(theta);
+  if (shape === 'polygon') {
+    const n   = Math.max(3, Math.round(polygonSides));
+    const seg = (2 * Math.PI) / n;
+    let a = (theta - rot) % seg;
+    if (a < 0) a += seg;
+    const poly = Math.cos(seg / 2) / Math.cos(a - seg / 2);
+    return { x: r * poly * ct, y: r * poly * st };
+  }
+  return { x: r * ct, y: r * st };
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -199,8 +283,21 @@ function drawSpiralArms(
     let fa = theta + armOffset + rotation + w;
     if (state.colorMode === 'kaleidoscopic') fa = reflectAngle(fa);
     const cfa = Math.cos(fa), sfa = Math.sin(fa);
-    const x = cx + r * cfa;
-    const y = cy + r * sfa;
+    // Spiral arms are circular by default. The 'polygon' shape warps them onto a
+    // regular N-gon, scaled up by 1/cos(seg/2) so even the flat edges push past
+    // the screen corners (no visible arm ends).
+    let px = r * cfa, py = r * sfa;
+    if (state.shape === 'polygon') {
+      const n   = Math.max(3, Math.round(state.polygonSides));
+      const seg = (2 * Math.PI) / n;
+      let a = fa % seg;
+      if (a < 0) a += seg;
+      const poly = 1 / Math.cos(a - seg / 2); // = (cos(seg/2)/cos(a-seg/2)) / cos(seg/2)
+      px = r * poly * cfa;
+      py = r * poly * sfa;
+    }
+    const x = cx + px;
+    const y = cy + py;
     // Center taper: width × (r/radius)^taperExp. Larger exponent → arms thin
     // faster toward the centre (more aggressive, pointier core); smaller →
     // fuller, rounder core that avoids the sub-pixel hairline ring on small
@@ -214,7 +311,9 @@ function drawSpiralArms(
   // at any radius — unlike a finite difference between near-coincident samples.
   // Disabled for kaleidoscopic mode (its angle reflection isn't differentiable);
   // that path falls back to finite differences.
-  const analyticNormals = state.colorMode !== 'kaleidoscopic';
+  // Analytic normals only exist for the plain spiral. Warped shapes (and morphs
+  // toward them) use the finite-difference fallback, like kaleidoscopic mode.
+  const analyticNormals = state.colorMode !== 'kaleidoscopic' && state.shape === 'spiral';
   const dThetaDt   = (mirrorArms ? -1 : 1) * state.turns * Math.PI * 2;  // d(theta)/dt
   const wobbleAmp  = state.wobble * 8 * Math.PI;                         // d(wobble)/dt coefficient
 
@@ -275,7 +374,10 @@ function drawSpiralArms(
   // with t, screen-radius uniquely maps to a taper value, so a radial mask is
   // EXACT (not an approximation) — and it leaves the ribbon geometry at full
   // opacity, so no seams appear in the faded region.
-  if (maskTaper && (taper > 0 || falloff > 0)) {
+  // The radial mask assumes screen-distance-from-centre maps monotonically to t,
+  // which only holds for the plain spiral. Warped shapes skip it (Arm Taper /
+  // Cell Falloff are disabled for them in the UI).
+  if (maskTaper && state.shape === 'spiral' && (taper > 0 || falloff > 0)) {
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'destination-in';
     const mask = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius);
@@ -315,6 +417,129 @@ function drawSpiralArms(
   ctx.globalAlpha = 1.0;
 }
 
+// Cycles per second of radial bloom at Spin Speed = 1. Tuned for a slow,
+// hypnotic tunnel; higher Spin Speed scales it up proportionally.
+const CONCENTRIC_BLOOM_RATE = 0.12;
+// Fraction of the radial range (t∈[0,1]) over which a ring fades in at the
+// centre and out at the edge, so the infinite wrap is seamless.
+const CONCENTRIC_FADE = 0.08;
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * drawConcentricArms
+ * Draws the concentric* shapes: `arms` nested, filled closed bands (circle,
+ * polygon, heart, or rose). Motion:
+ *   • Radial bloom — Spin Speed + Direction drift the rings outward (direction 1)
+ *     or inward (-1) over time; positions wrap in [0,1) and fade at both ends so
+ *     rings bloom from the centre and dissolve at the edge infinitely.
+ *   • Angular spin — polygon/heart/rose additionally rotate by `rotation`.
+ *   • Wobble — a radial "breathing" pulse that scales every ring together.
+ * Each ring is a band of thickness `strokeWidth` traced as an outer loop +
+ * reversed inner loop, filled even-odd. Shares drawSpiralArms' signature.
+ * ───────────────────────────────────────────────────────────────────────────── */
+function drawConcentricArms(
+  ctx: CanvasRenderingContext2D,
+  cx: number, cy: number,
+  radius: number, strokeWidth: number,
+  rotation: number,
+  state: AppState,
+  timeSec: number,
+  baseAlpha: number = 1.0,
+  mirrorArms: boolean = false,
+): void {
+  const base = concentricBase(state.shape);
+  if (!base) return;
+
+  const rings = Math.max(1, Math.round(state.arms));
+  const steps = base === 'polygon' ? 240 : 200; // loop resolution
+  const thetaSign = mirrorArms ? -1 : 1;
+  // Center-taper exponent (same mapping as drawSpiralArms): thins bands toward
+  // the centre so the innermost rings don't crowd.
+  const taperExp = 0.2 + Math.min(100, Math.max(0, state.taperStrength)) / 100 * 0.8;
+
+  // Radial bloom phase. direction 1 → outward, -1 → inward. Wrapped per ring.
+  const dirSign = state.direction === 1 ? 1 : -1;
+  const bloom = timeSec * state.rotationSpeed * CONCENTRIC_BLOOM_RATE * dirSign;
+  // Uniform radial breathing from Wobble (scales the whole figure in/out).
+  const breathe = 1 + 0.18 * state.wobble * Math.sin(state.wobblePhase + timeSec * state.wobbleSpeed * Math.PI * 2);
+  // Smooth fade-in at the centre / fade-out at the edge for seamless wrapping.
+  const endFade = (t: number) => Math.max(0, Math.min(1, Math.min(t, 1 - t) / CONCENTRIC_FADE));
+
+  ctx.fillStyle = ctx.strokeStyle;
+
+  // Per-ring twist for polygons: a radial gradient fill is rotation-invariant and
+  // a regular N-gon repeats every 2π/n, so aligned overlapping rings look frozen
+  // when spun. We wind each ring's orientation by its normalised radius `t`, so the
+  // figure becomes a spiral of polygons that visibly rotates as it blooms. The
+  // twist is keyed to radius (not ring index) so it travels with the bloom, and the
+  // center↔edge seam falls inside the fade zone where rings are invisible — which
+  // lets the span run up to a full turn (concentricTwist = 1) without a visible seam.
+  const twistSpan = base === 'polygon' ? 2 * Math.PI * state.concentricTwist : 0;
+
+  // Bloom is applied to the radius; orientation comes from `rotation` + the
+  // per-ring twist.
+  const pt = (rr: number, ang: number, rot: number) => {
+    // Place the point at the sweep angle; let `rot` orient the polygon's faces.
+    const theta = thetaSign * ang;
+    return shapePoint(base, rr, theta, rot, state.polygonSides);
+  };
+
+  for (let i = 0; i < rings; i++) {
+    // Evenly spaced in t, then drifted by the bloom phase and wrapped to [0,1).
+    let t = (i + 0.5) / rings + bloom;
+    t -= Math.floor(t);
+    const ringRot = rotation + t * twistSpan;
+
+    const rC = computeSpiralR(t, radius, state.curve, state.spiralMath) * breathe;
+    const rNorm = radius > 0 ? Math.min(1, rC / radius) : 0;
+    const halfW = Math.max(0.5, strokeWidth * Math.pow(rNorm, taperExp)) / 2;
+    const rOut = rC + halfW;
+    const rIn  = Math.max(0, rC - halfW);
+
+    ctx.globalAlpha = baseAlpha * endFade(t);
+
+    ctx.beginPath();
+    // Outer loop.
+    for (let k = 0; k <= steps; k++) {
+      const ang = (k / steps) * Math.PI * 2;
+      const p = pt(rOut, ang, ringRot);
+      if (k === 0) ctx.moveTo(cx + p.x, cy + p.y); else ctx.lineTo(cx + p.x, cy + p.y);
+    }
+    // Inner loop (reversed) — carves the hole via even-odd fill.
+    for (let k = steps; k >= 0; k--) {
+      const ang = (k / steps) * Math.PI * 2;
+      const p = pt(rIn, ang, ringRot);
+      ctx.lineTo(cx + p.x, cy + p.y);
+    }
+    ctx.closePath();
+    ctx.fill('evenodd');
+  }
+
+  ctx.globalAlpha = 1.0;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * drawArms — dispatch to the concentric or spiral renderer based on state.shape.
+ * Keeps a single call-site signature for the normal, Eyes, and second-spiral
+ * render paths.
+ * ───────────────────────────────────────────────────────────────────────────── */
+function drawArms(
+  ctx: CanvasRenderingContext2D,
+  cx: number, cy: number,
+  radius: number, strokeWidth: number,
+  rotation: number,
+  state: AppState,
+  timeSec: number,
+  baseAlpha: number = 1.0,
+  mirrorArms: boolean = false,
+  maskTaper: boolean = false,
+): void {
+  if (isConcentricShape(state.shape)) {
+    drawConcentricArms(ctx, cx, cy, radius, strokeWidth, rotation, state, timeSec, baseAlpha, mirrorArms);
+  } else {
+    drawSpiralArms(ctx, cx, cy, radius, strokeWidth, rotation, state, timeSec, baseAlpha, mirrorArms, maskTaper);
+  }
+}
+
 /* ─────────────────────────────────────────────────────────────────────────────
  * SpiralCanvas component
  * ───────────────────────────────────────────────────────────────────────────── */
@@ -330,19 +555,52 @@ export const SpiralCanvas: React.FC<{ state: AppState }> = ({ state }) => {
   const offscreenRef    = useRef<HTMLCanvasElement[]>([]);
   // Single offscreen layer for the ribbon flat-composite prototype — re-used across frames.
   const flatLayerRef    = useRef<HTMLCanvasElement | null>(null);
+  // Second spiral: its own offscreen layer + independent rotation accumulator.
+  const secondaryLayerRef = useRef<HTMLCanvasElement | null>(null);
+  const rotation2Ref      = useRef(0);
   // Afterimage Bloom: frameLayerRef holds the just-rendered frame (so it can be
   // both shown and stamped into the trail buffer); trailLayerRef accumulates a
   // decaying history of recent frames that gets blended back in for ghosting.
   const frameLayerRef   = useRef<HTMLCanvasElement | null>(null);
   const trailLayerRef   = useRef<HTMLCanvasElement | null>(null);
+  // Frame-hold: the last "captured" crisp frame (held between captures) and the
+  // timestamp of that capture, for the stop-motion / hitched look.
+  const heldLayerRef    = useRef<HTMLCanvasElement | null>(null);
+  const lastHoldRef     = useRef(0);
+  // Independent Afterimage Bloom for the SECOND spiral — its own trail / held /
+  // hold-timestamp, mirroring the primary set above so the two can bloom apart.
+  const secTrailLayerRef = useRef<HTMLCanvasElement | null>(null);
+  const secHeldLayerRef  = useRef<HTMLCanvasElement | null>(null);
+  const secLastHoldRef   = useRef(0);
   // Global session clock — set on first frame, never reset. Foundation for future sync.
   const sessionStartRef  = useRef<number>(0);
   const frameCountRef    = useRef(0);
   // Master tempo phase accumulator — advances at BPM/60 per second when enabled.
   const masterPhaseRef   = useRef(0);
+  // Background image: the loaded <img> + ready flag, and an offscreen cache of
+  // the filled/blurred image (rebuilt only when url/fill/blur/size change; dim is
+  // applied cheaply via alpha each frame).
+  const bgImgRef   = useRef<{ url: string; img: HTMLImageElement | null; ready: boolean }>({ url: '', img: null, ready: false });
+  const bgCacheRef = useRef<{ sig: string; canvas: HTMLCanvasElement | null }>({ sig: '', canvas: null });
   // Zoom phase accumulator (archived with zoom feature — see comment in render loop)
   // const zoomPhaseRef     = useRef(0);
   // const prevRampEpochRef = useRef(0);
+
+  // Load the background image whenever its URL changes. No crossOrigin so more
+  // hosts load (we only display it — a tainted canvas is fine for rendering).
+  useEffect(() => {
+    if (!state.bgImageEnabled || !state.bgImageUrl) {
+      bgImgRef.current = { url: '', img: null, ready: false };
+      return;
+    }
+    if (bgImgRef.current.url === state.bgImageUrl && bgImgRef.current.img) return;
+    const img = new Image();
+    const rec = { url: state.bgImageUrl, img, ready: false };
+    img.onload  = () => { if (bgImgRef.current === rec) rec.ready = true; };
+    img.onerror = () => { if (bgImgRef.current === rec) rec.ready = false; };
+    bgImgRef.current = rec;
+    img.src = state.bgImageUrl;
+  }, [state.bgImageEnabled, state.bgImageUrl]);
 
   useAnimationFrame((dt, time) => {
     const canvas = canvasRef.current;
@@ -439,6 +697,12 @@ export const SpiralCanvas: React.FC<{ state: AppState }> = ({ state }) => {
 
     rotationRef.current += deltaSec * effectiveSpeed;
 
+    // Second spiral spins on its own speed/direction. It shares the speed-ramp
+    // unless it's been set to ignore ramping, in which case it holds a constant rate.
+    const spiralFactor2  = state.secondary.ignoreRamp ? 1 : spiralFactor;
+    const effectiveSpeed2 = state.secondary.rotationSpeed * (-state.secondary.direction as 1 | -1) * spiralFactor2;
+    rotation2Ref.current += deltaSec * effectiveSpeed2;
+
     if (state.colorMode !== 'static') {
       const colorFactor = (rampActive && state.rampColorSpeed) ? dynamicSpeedFactor : 1;
       colorPhaseRef.current += deltaSec * state.colorCyclingSpeed * colorFactor * 0.5;
@@ -503,6 +767,43 @@ export const SpiralCanvas: React.FC<{ state: AppState }> = ({ state }) => {
     const layerW = Math.round(logicalWidth  * renderScale);
     const layerH = Math.round(logicalHeight * renderScale);
 
+    // ── Background image: refresh the filled/blurred cache, then expose a
+    //    paintBackground() that fills bgColor (+ the cached image at dim alpha). ──
+    let bgCanvas: HTMLCanvasElement | null = null;
+    if (state.bgImageEnabled && bgImgRef.current.ready && bgImgRef.current.img) {
+      const img = bgImgRef.current.img;
+      const blurPx = Math.max(0, Math.min(50, state.bgImageBlur));
+      const sig = `${bgImgRef.current.url}|${state.bgImageFill}|${blurPx}|${physicalWidth}x${physicalHeight}`;
+      if (bgCacheRef.current.sig !== sig) {
+        let cv = bgCacheRef.current.canvas;
+        if (!cv) cv = document.createElement('canvas');
+        cv.width = physicalWidth; cv.height = physicalHeight;
+        const cg = cv.getContext('2d')!;
+        cg.setTransform(1, 0, 0, 1, 0, 0);
+        cg.clearRect(0, 0, physicalWidth, physicalHeight);
+        cg.save();
+        if (blurPx > 0) cg.filter = `blur(${blurPx * dpr}px)`;
+        drawImageFill(cg, img, img.naturalWidth, img.naturalHeight, state.bgImageFill, physicalWidth, physicalHeight);
+        cg.restore();
+        bgCacheRef.current = { sig, canvas: cv };
+      }
+      bgCanvas = bgCacheRef.current.canvas;
+    }
+
+    // Paints the visible background into ctx-space (logical coords under the dpr
+    // transform): solid bgColor, then the cached image faded by bgImageDim.
+    const paintBackground = (g: CanvasRenderingContext2D) => {
+      g.globalCompositeOperation = 'source-over';
+      g.globalAlpha = 1;
+      g.fillStyle = bgColor;
+      g.fillRect(0, 0, logicalWidth, logicalHeight);
+      if (bgCanvas) {
+        g.globalAlpha = 1 - Math.max(0, Math.min(100, state.bgImageDim)) / 100;
+        g.drawImage(bgCanvas, 0, 0, logicalWidth, logicalHeight);
+        g.globalAlpha = 1;
+      }
+    };
+
     // Eyes effect is on whenever enabled. (Rhythmic on/off is handled via
     // sequences now — the old auto duty-cycle pulse has been removed.)
     const isFragmented = state.fragmentEnabled;
@@ -545,13 +846,10 @@ export const SpiralCanvas: React.FC<{ state: AppState }> = ({ state }) => {
       const cyEye = logicalHeight / 2;
 
       frameTarget.globalCompositeOperation = 'source-over';
-      // Only paint the opaque background when drawing straight to the visible
-      // canvas. With afterimage on, frameTarget is the transparent arms layer
-      // and must stay transparent so the trail buffer can persist past frames.
-      if (!afterimageOn) {
-        frameTarget.fillStyle = bgColor;
-        frameTarget.fillRect(0, 0, logicalWidth, logicalHeight);
-      }
+      // Only paint the background when drawing straight to the visible canvas.
+      // With afterimage on, frameTarget is the transparent arms layer and must
+      // stay transparent so the trail buffer can persist past frames.
+      if (!afterimageOn) paintBackground(frameTarget);
 
       // Separation-mask geometry. Each eye is confined to a radial region centred
       // on its own eye centre. eyeSpread widens that region (more overlap toward
@@ -588,7 +886,7 @@ export const SpiralCanvas: React.FC<{ state: AppState }> = ({ state }) => {
         // Full-canvas-radius spiral, centred on this eye. Drawn at full opacity to
         // its own layer so ribbon overlap seams never reappear.
         oCtx.strokeStyle = buildGradient(oCtx, cxEye, cyEye, effectiveRadius, activeColors, colorPhase);
-        drawSpiralArms(oCtx, cxEye, cyEye, effectiveRadius, effectiveWidth, cellRotation, state, timeSec, 1.0, mirrorEye, true);
+        drawArms(oCtx, cxEye, cyEye, effectiveRadius, effectiveWidth, cellRotation, state, timeSec, 1.0, mirrorEye, true);
 
         // Per-eye separation mask: confine this eye to a soft radial region around
         // its own centre. This is the "special vignette" that stops each eye from
@@ -614,12 +912,9 @@ export const SpiralCanvas: React.FC<{ state: AppState }> = ({ state }) => {
     // ═════════════════════════════════════════════════════════════════════════
     } else {
       frameTarget.globalCompositeOperation = 'source-over';
-      // See eyes path: skip the bg fill when rendering into the transparent
+      // See eyes path: skip the bg paint when rendering into the transparent
       // arms layer for the afterimage trail.
-      if (!afterimageOn) {
-        frameTarget.fillStyle = bgColor;
-        frameTarget.fillRect(0, 0, logicalWidth, logicalHeight);
-      }
+      if (!afterimageOn) paintBackground(frameTarget);
 
       // Flat-layer composite: draw all arms onto a transparent offscreen with
       // source-over (overlaps paint once — no accumulation), then composite the
@@ -638,10 +933,61 @@ export const SpiralCanvas: React.FC<{ state: AppState }> = ({ state }) => {
       lCtx.imageSmoothingEnabled = true;
       if ('imageSmoothingQuality' in lCtx) (lCtx as any).imageSmoothingQuality = 'high';
       lCtx.strokeStyle = buildGradient(lCtx, centerX, centerY, effectiveRadius, activeColors, colorPhase);
-      drawSpiralArms(lCtx, centerX, centerY, effectiveRadius, effectiveWidth, rotation, state, timeSec, 1.0, false, true);
+      drawArms(lCtx, centerX, centerY, effectiveRadius, effectiveWidth, rotation, state, timeSec, 1.0, false, true);
 
       frameTarget.globalCompositeOperation = isDarken ? 'screen' : 'multiply';
       frameTarget.drawImage(layer, 0, 0, logicalWidth, logicalHeight);
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // SECOND SPIRAL — an optional full-canvas spiral composited over the primary
+    // ═════════════════════════════════════════════════════════════════════════
+    if (state.secondaryEnabled) {
+      const sec = state.secondary;
+      // Map the secondary's own spiral fields onto the names drawSpiralArms reads.
+      const secState = {
+        ...state,
+        arms: sec.arms, turns: sec.turns, curve: sec.curve,
+        wobble: sec.wobble, wobblePhase: sec.wobblePhase, wobbleSpeed: sec.wobbleSpeed,
+        spiralMath: sec.spiralMath, shape: sec.shape, polygonSides: sec.polygonSides,
+        concentricTwist: sec.concentricTwist,
+        colorMode: sec.colorMode, kaleidoscopeSectors: sec.kaleidoscopeSectors,
+        taperStrength: sec.taperStrength, armTaper: sec.armTaper,
+      } as typeof state;
+
+      let activeColors2: string[];
+      if      (sec.gradientType === 'Single') activeColors2 = [sec.color1];
+      else if (sec.gradientType === 'Two')    activeColors2 = [sec.color1, sec.color2];
+      else                                    activeColors2 = [sec.color1, sec.color2, sec.color3];
+
+      let s2 = secondaryLayerRef.current;
+      if (!s2) { s2 = document.createElement('canvas'); secondaryLayerRef.current = s2; }
+      if (s2.width !== layerW || s2.height !== layerH) { s2.width = layerW; s2.height = layerH; }
+      const s2Ctx = s2.getContext('2d')!;
+      s2Ctx.setTransform(renderScale, 0, 0, renderScale, 0, 0);
+      s2Ctx.imageSmoothingEnabled = true;
+      if ('imageSmoothingQuality' in s2Ctx) (s2Ctx as any).imageSmoothingQuality = 'high';
+      s2Ctx.globalCompositeOperation = 'source-over';
+      s2Ctx.clearRect(0, 0, logicalWidth, logicalHeight);
+      s2Ctx.strokeStyle = buildGradient(s2Ctx, centerX, centerY, effectiveRadius, activeColors2, colorPhase);
+      drawArms(s2Ctx, centerX, centerY, effectiveRadius, sec.width, rotation2Ref.current, secState, timeSec, 1.0, false, true);
+
+      // When the second spiral has its OWN bloom we DON'T composite it here — it
+      // is handled in its independent afterimage block below (which draws onto the
+      // visible canvas after the primary has fully resolved). Otherwise it folds
+      // into frameTarget as before (sharing the primary bloom if that's on).
+      if (!sec.afterimageEnabled) {
+        // Composite with the chosen blend + opacity. 'normal' → plain source-over;
+        // the others map directly to canvas blend ops.
+        const blendOp = state.secondaryBlendMode === 'normal'
+          ? 'source-over'
+          : (state.secondaryBlendMode as GlobalCompositeOperation);
+        frameTarget.globalCompositeOperation = blendOp;
+        frameTarget.globalAlpha = Math.min(1, Math.max(0, state.secondaryOpacity / 100));
+        frameTarget.drawImage(s2, 0, 0, logicalWidth, logicalHeight);
+        frameTarget.globalAlpha = 1;
+        frameTarget.globalCompositeOperation = 'source-over';
+      }
     }
 
     // ── Afterimage Bloom: feedback-buffer trail ──────────────────────────────
@@ -662,7 +1008,19 @@ export const SpiralCanvas: React.FC<{ state: AppState }> = ({ state }) => {
       let trail = trailLayerRef.current;
       if (!trail) { trail = document.createElement('canvas'); trailLayerRef.current = trail; }
       if (trail.width !== physicalWidth || trail.height !== physicalHeight) {
-        trail.width = physicalWidth; trail.height = physicalHeight;
+        // Preserve the accumulated trail across resizes. Mobile browsers resize
+        // the canvas constantly as the URL bar shows/hides; resizing clears a
+        // canvas, which would wipe the trail every frame and make the effect
+        // appear broken on mobile. Copy the old content into the new size.
+        if (trail.width > 0 && trail.height > 0) {
+          const tmp = document.createElement('canvas');
+          tmp.width = trail.width; tmp.height = trail.height;
+          tmp.getContext('2d')!.drawImage(trail, 0, 0);
+          trail.width = physicalWidth; trail.height = physicalHeight;
+          trail.getContext('2d')!.drawImage(tmp, 0, 0, physicalWidth, physicalHeight);
+        } else {
+          trail.width = physicalWidth; trail.height = physicalHeight;
+        }
       }
       const tCtx = trail.getContext('2d')!;
       tCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -670,22 +1028,37 @@ export const SpiralCanvas: React.FC<{ state: AppState }> = ({ state }) => {
       const blend = isDarken ? 'screen' : 'multiply';
       const intensity = Math.min(100, Math.max(0, state.afterimageIntensity)) / 100;
 
-      // 1) Crisp present frame: opaque bg, then arms.
-      ctx.globalCompositeOperation = 'source-over';
-      ctx.globalAlpha = 1;
-      ctx.fillStyle = bgColor;
-      ctx.fillRect(0, 0, logicalWidth, logicalHeight);
+      // Frame-hold: capture a new crisp frame only every `holdMs`, displaying the
+      // held frame in between for a stop-motion / hitched look. 0 = every frame.
+      const holdMs = Math.max(0, state.afterimageHold);
+      let held = heldLayerRef.current;
+      if (!held) { held = document.createElement('canvas'); heldLayerRef.current = held; }
+      if (held.width !== physicalWidth || held.height !== physicalHeight) {
+        held.width = physicalWidth; held.height = physicalHeight;
+        lastHoldRef.current = 0; // force a fresh capture after a resize
+      }
+      const doCapture = holdMs <= 0 || lastHoldRef.current === 0 || (time - lastHoldRef.current) >= holdMs;
+      if (doCapture) {
+        const hCtx = held.getContext('2d')!;
+        hCtx.setTransform(1, 0, 0, 1, 0, 0);
+        hCtx.clearRect(0, 0, physicalWidth, physicalHeight);
+        hCtx.drawImage(frameLayer, 0, 0);
+        lastHoldRef.current = time;
+      }
+
+      // 1) Crisp present (held) frame: background (image), then arms.
+      paintBackground(ctx);
       ctx.globalCompositeOperation = blend;
-      ctx.drawImage(frameLayer, 0, 0, logicalWidth, logicalHeight);
+      ctx.drawImage(held, 0, 0, logicalWidth, logicalHeight);
 
       // 2) Ghost: the existing (already-faded) trail of PAST arm positions.
       ctx.globalAlpha = intensity;
       ctx.drawImage(trail, 0, 0, logicalWidth, logicalHeight);
       ctx.globalAlpha = 1;
 
-      // 3) Age the trail, then deposit the current arms at full strength.
-      // decay = fraction of the trail's alpha removed this frame so it falls to
-      // ~5% after roughly afterimageDuration seconds, independent of FPS.
+      // 3) Age the trail every frame; deposit the held frame only on a capture so
+      // the ghost steps in sync with the hold. decay = fraction of the trail's
+      // alpha removed this frame (~5% remaining after afterimageDuration), FPS-independent.
       const durationSec = Math.max(0.05, state.afterimageDuration / 1000);
       const decay = Math.min(1, Math.max(0, 1 - Math.exp(-3 * deltaSec / durationSec)));
       tCtx.globalCompositeOperation = 'destination-out';
@@ -694,7 +1067,78 @@ export const SpiralCanvas: React.FC<{ state: AppState }> = ({ state }) => {
       tCtx.fillRect(0, 0, logicalWidth, logicalHeight);
       tCtx.globalCompositeOperation = 'source-over';
       tCtx.globalAlpha = 1;
-      tCtx.drawImage(frameLayer, 0, 0, logicalWidth, logicalHeight);
+      if (doCapture) tCtx.drawImage(held, 0, 0, logicalWidth, logicalHeight);
+    }
+
+    // ── Second spiral — independent Afterimage Bloom ─────────────────────────
+    // Mirrors the primary bloom (decaying destination-out trail + optional frame
+    // hold) but with its own buffers and settings, composited onto the visible
+    // canvas AFTER the primary resolves so it layers on top with its blend/opacity.
+    if (state.secondaryEnabled && state.secondary.afterimageEnabled && secondaryLayerRef.current) {
+      const sec = state.secondary;
+      const s2  = secondaryLayerRef.current;
+
+      let trail2 = secTrailLayerRef.current;
+      if (!trail2) { trail2 = document.createElement('canvas'); secTrailLayerRef.current = trail2; }
+      if (trail2.width !== physicalWidth || trail2.height !== physicalHeight) {
+        // Preserve the trail across (mobile) resizes — see primary block.
+        if (trail2.width > 0 && trail2.height > 0) {
+          const tmp = document.createElement('canvas');
+          tmp.width = trail2.width; tmp.height = trail2.height;
+          tmp.getContext('2d')!.drawImage(trail2, 0, 0);
+          trail2.width = physicalWidth; trail2.height = physicalHeight;
+          trail2.getContext('2d')!.drawImage(tmp, 0, 0, physicalWidth, physicalHeight);
+        } else {
+          trail2.width = physicalWidth; trail2.height = physicalHeight;
+        }
+      }
+      const t2Ctx = trail2.getContext('2d')!;
+      t2Ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+      const blendOp2 = state.secondaryBlendMode === 'normal'
+        ? 'source-over'
+        : (state.secondaryBlendMode as GlobalCompositeOperation);
+      const opacity2   = Math.min(1, Math.max(0, state.secondaryOpacity / 100));
+      const intensity2 = Math.min(100, Math.max(0, sec.afterimageIntensity)) / 100;
+
+      // Frame-hold capture for the secondary (0 = capture every frame).
+      const holdMs2 = Math.max(0, sec.afterimageHold);
+      let held2 = secHeldLayerRef.current;
+      if (!held2) { held2 = document.createElement('canvas'); secHeldLayerRef.current = held2; }
+      if (held2.width !== physicalWidth || held2.height !== physicalHeight) {
+        held2.width = physicalWidth; held2.height = physicalHeight;
+        secLastHoldRef.current = 0;
+      }
+      const doCapture2 = holdMs2 <= 0 || secLastHoldRef.current === 0 || (time - secLastHoldRef.current) >= holdMs2;
+      if (doCapture2) {
+        const h2Ctx = held2.getContext('2d')!;
+        h2Ctx.setTransform(1, 0, 0, 1, 0, 0);
+        h2Ctx.clearRect(0, 0, physicalWidth, physicalHeight);
+        // s2 is supersampled (layerW×layerH); scale it into the physical buffer.
+        h2Ctx.drawImage(s2, 0, 0, physicalWidth, physicalHeight);
+        secLastHoldRef.current = time;
+      }
+
+      // 1) Crisp present (held) secondary frame.
+      ctx.globalCompositeOperation = blendOp2;
+      ctx.globalAlpha = opacity2;
+      ctx.drawImage(held2, 0, 0, logicalWidth, logicalHeight);
+      // 2) Ghost: the decaying trail of past secondary positions.
+      ctx.globalAlpha = opacity2 * intensity2;
+      ctx.drawImage(trail2, 0, 0, logicalWidth, logicalHeight);
+      ctx.globalAlpha = 1;
+      ctx.globalCompositeOperation = 'source-over';
+
+      // 3) Age the trail; deposit the held frame only on a capture.
+      const durationSec2 = Math.max(0.05, sec.afterimageDuration / 1000);
+      const decay2 = Math.min(1, Math.max(0, 1 - Math.exp(-3 * deltaSec / durationSec2)));
+      t2Ctx.globalCompositeOperation = 'destination-out';
+      t2Ctx.globalAlpha = decay2;
+      t2Ctx.fillStyle = '#000000';
+      t2Ctx.fillRect(0, 0, logicalWidth, logicalHeight);
+      t2Ctx.globalCompositeOperation = 'source-over';
+      t2Ctx.globalAlpha = 1;
+      if (doCapture2) t2Ctx.drawImage(held2, 0, 0, logicalWidth, logicalHeight);
     }
 
     // ── Apply hue rotation imperatively (no React re-render) ─────────────────

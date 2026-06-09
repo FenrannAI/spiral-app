@@ -29,7 +29,15 @@ const MOTION_FIELDS: (keyof AppState)[] = [
   // Hue Rotation, Arm Taper, Cell Falloff & Vignette
   'hueRotation', 'hueRotateSpeed', 'taperStrength', 'armTaper', 'cellFalloff', 'eyeSpread', 'eyeSoftness', 'vignetteIntensity', 'vignetteSize', 'vignetteSoftness',
   // Afterimage Bloom
-  'afterimageIntensity', 'afterimageDuration',
+  'afterimageIntensity', 'afterimageDuration', 'afterimageHold',
+  // Geometry
+  'concentricTwist',
+  // Text modes
+  'wpm', 'wallOpacity', 'wallDensity', 'highlightSweepSpeed',
+  // Second spiral (opacity lerps; enabled/blendMode/secondary-object snap)
+  'secondaryOpacity',
+  // Background image (dim + blur lerp for cross-fades)
+  'bgImageDim', 'bgImageBlur',
   // Audio (continuous params)
   'audioVolume', 'audioCarrierFreq', 'audioBeatFreq', 'audioDroneLevel',
   'audioNoiseLevel', 'audioTremoloRate', 'audioTremoloDepth',
@@ -40,7 +48,8 @@ const MOTION_FIELDS: (keyof AppState)[] = [
 /** Discrete fields that must snap at end-of-transition, never lerp */
 const STRUCTURE_FIELDS: (keyof AppState)[] = [
   'arms', 'direction', 'gradientType', 'textAnimation', 'mode',
-  'spiralRenderMode', 'spiralMath', 'colorMode', 'kaleidoscopeSectors', 'strobeColorCount',
+  'spiralRenderMode', 'spiralMath', 'shape', 'polygonSides', 'colorMode', 'kaleidoscopeSectors', 'strobeColorCount',
+  'textMode', 'secondaryBlendMode', 'bgImageFill',
   'rampMode',
   // Zoom Tunnel (archived)
   // 'zoomDirection', 'zoomEasing', 'zoomMode',
@@ -62,7 +71,7 @@ const STRUCTURE_FIELDS: (keyof AppState)[] = [
 const SNAP_FIELDS: (keyof AppState)[] = [
   'textEnabled', 'flashEnabled', 'intenseFlash', 'pulseSpeed',
   'rampSpiralSpeed', 'rampColorSpeed', 'rampTextSpeed', 'rampStrobeSpeed',
-  'centerDotEnabled', 'randomOrder', 'afterimageEnabled',
+  'centerDotEnabled', 'randomOrder', 'afterimageEnabled', 'rsvpOrp', 'rsvpAnchor', 'secondaryEnabled', 'bgImageEnabled',
   'sequencerEnabled', 'sequencerPlaying', 'sequencerLoop',
   // Inversion Pulse
   'inversionEnabled', 'rampInversionSpeed',
@@ -85,7 +94,7 @@ const SNAP_FIELDS: (keyof AppState)[] = [
 const COLOR_FIELDS: (keyof AppState)[] = [
   'color1', 'color2', 'color3', 'textColor', 'flashColor',
   'centerDotColor', 'strobeColor1', 'strobeColor2', 'strobeColor3',
-  'fragmentBorderColor',
+  'fragmentBorderColor', 'highlightColor',
   // Vignette
   'vignetteColor',
 ];
@@ -328,6 +337,10 @@ function App() {
           'vignetteEnabled',
           // Center dot
           'centerDotEnabled',
+          // Second spiral
+          'secondaryEnabled',
+          // Background image
+          'bgImageEnabled',
           // Audio
           'audioEnabled', 'audioToneEnabled', 'audioDroneEnabled', 'audioNoiseEnabled',
           // Master Tempo (booleans)
@@ -440,8 +453,9 @@ function App() {
             interpolated.transitionInversion = on ? 100 : 0;    // 0 = override-but-off
           }
 
-          // Text lines always snap
+          // Text lines + background image URL always snap (strings, no lerp).
           if ('textLines' in toState) interpolated.textLines = toState.textLines;
+          if ('bgImageUrl' in toState) interpolated.bgImageUrl = toState.bgImageUrl;
 
           updateState(interpolated);
 

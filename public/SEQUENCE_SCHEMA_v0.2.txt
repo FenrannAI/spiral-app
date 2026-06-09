@@ -1,8 +1,7 @@
-# HypnoVis Sequence JSON Generator Prompt
-# Paste this file into any AI assistant to instruct it to generate a multi-phase sequence.
+# HypnoVis Sequence JSON Schema (v0.2)
+# Paste this file into an AI assistant to instruct it to generate a multi-phase sequence.
 
-Sequencer Schema for HypnoVis sequences.
-Generates a complete multi-phase animation journey.
+Sequencer schema for HypnoVis sequences — a complete multi-phase animation journey.
 
 type Transition = "linear" | "ease" | "pulse" | "spinBurst" | "fragment" | "inversionPulse";
 
@@ -16,7 +15,7 @@ interface Sequence {
 }
 
 interface Phase {
-  id: string;                       # Simple short slug/identifier
+  id: string;                       # Short slug/identifier
   title: string;                    # UI phase label shown to user
   duration: number;                 # Hold time in seconds (e.g., 5 or 10)
   transitionType?: Transition;      # Transition style [Default: "linear"]
@@ -25,89 +24,73 @@ interface Phase {
                                     #   pulse     — overshoots target then settles
                                     #   spinBurst — ease + extra rotation surge
                                     #   fragment  — ease + brings the Eyes effect in with a phase-offset surge
-                                    #   inversionPulse — ease + full-screen inversion that
-                                    #                flashes faster and faster (500ms→50ms)
-                                    #                across the transition, overriding the
-                                    #                normal inversion pulse until it completes
+                                    #   inversionPulse — ease + full-screen inversion flashing faster and
+                                    #                faster (500ms→50ms) across the transition, overriding
+                                    #                the normal inversion pulse until it completes
   transitionDuration?: number;      # Transition time in seconds [Default: 2]
 
   # settings is a REAL nested JSON object (NOT a string) holding this phase's
   # visual fields — any per-phase preset key (everything except the base-only
   # fields above). It is SELF-CONTAINED: include the fields you want this phase
   # to set; omitted fields use their DEFAULTS, never the previous phase's value.
-  # No escaping, no deltas, no inheritance.
   settings: object;
 }
 
 # ── HOW TRANSITIONS WORK ─────────────────────────────────────────────────────
-# Each AppState field falls into one of three categories during a transition:
+# Each field falls into one of these categories during a transition:
 #
 # MOTION (continuously interpolated)
-#   turns, curve, width, wobble*, colorCyclingSpeed, rotationSpeed, lineSpeed,
-#   lineTime, textSize, flashIntensity, intenseStrobeDelay, strobeLength,
-#   strobeIntensity, pulseMin, pulseMax, rampDuration, centerDotRadius,
-#   inversionRate, inversionDuration, inversionIntensity,
-#   fragmentPhaseOffset, eyeSpread, eyeSoftness,
-#   hueRotation, hueRotateSpeed, armTaper,
+#   turns, curve, width, wobble, wobblePhase, wobbleSpeed, colorCyclingSpeed,
+#   rotationSpeed, lineSpeed, lineTime, textSize, flashIntensity,
+#   intenseStrobeDelay, strobeLength, strobeIntensity, pulseMin, pulseMax,
+#   rampDuration, centerDotRadius, inversionRate, inversionDuration,
+#   inversionIntensity, fragmentPhaseOffset, eyeSpread, eyeSoftness,
+#   hueRotation, hueRotateSpeed, armTaper, taperStrength, concentricTwist,
 #   vignetteIntensity, vignetteSize, vignetteSoftness,
+#   afterimageIntensity, afterimageDuration, afterimageHold,
+#   wpm, wallOpacity, wallDensity, highlightSweepSpeed,
+#   secondaryOpacity, bgImageDim, bgImageBlur,
 #   audioVolume, audioCarrierFreq, audioBeatFreq, audioDroneLevel,
-#   audioNoiseLevel, audioTremoloRate, audioTremoloDepth,
-#   masterTempoBpm
-#
-# STRUCTURE (snapped at end of transition; never lerped)
-#   arms, direction, gradientType, textAnimation, mode, spiralMath, colorMode,
-#   kaleidoscopeSectors, strobeColorCount, rampMode,
-#   fragmentDirectionMode, vignetteShape,
-#   audioBeatMode, audioWaveform, audioDroneInterval, audioNoiseType,
-#   lockColorCyclingRatio, lockHueRotateRatio, lockStrobeRatio,
-#   lockInversionRatio, lockTextRatio,
-#   lockSpeedRampRatio, lockAudioTremoloRatio, lockAudioBeatRatio,
-#   masterTempoBeats,
-#   lockStrobeBeat, lockInversionBeat, lockTextBeat
-#
-# SNAP (applied instantly at phase start)
-#   textEnabled, flashEnabled, intenseFlash, pulseSpeed, randomOrder,
-#   centerDotEnabled, all ramp*Speed toggles,
-#   inversionEnabled, fragmentEnabled (Eyes),
-#   vignetteEnabled,
-#   audioEnabled, audioToneEnabled, audioDroneEnabled, audioNoiseEnabled,
-#   rampAudioBeat,
-#   masterTempoEnabled, masterTempoIndicator,
-#   lockColorCycling, lockHueRotate, lockStrobe,
-#   lockInversion, lockText, lockSpeedRamp, lockAudioTremolo, lockAudioBeat
+#   audioNoiseLevel, audioTremoloRate, audioTremoloDepth, masterTempoBpm
 #
 # COLOR (interpolated)
 #   color1, color2, color3, textColor, flashColor, centerDotColor,
-#   strobeColor1, strobeColor2, strobeColor3,
-#   vignetteColor
+#   strobeColor1, strobeColor2, strobeColor3, highlightColor, vignetteColor
+#
+# STRUCTURE (snapped at end of transition; never lerped)
+#   arms, direction, gradientType, textAnimation, mode, spiralMath, shape,
+#   polygonSides, colorMode, kaleidoscopeSectors, strobeColorCount, textMode,
+#   secondaryBlendMode, bgImageFill, rampMode, fragmentDirectionMode,
+#   vignetteShape, audioBeatMode, audioWaveform, audioDroneInterval,
+#   audioNoiseType, masterTempoBeats, all lock*Ratio and lock*Beat fields
+#
+# SNAP (applied instantly at phase start)
+#   textEnabled, flashEnabled, intenseFlash, pulseSpeed, randomOrder, rsvpOrp, rsvpAnchor,
+#   centerDotEnabled, afterimageEnabled, secondaryEnabled, bgImageEnabled,
+#   all ramp*Speed toggles, inversionEnabled, fragmentEnabled (Eyes),
+#   vignetteEnabled, audioEnabled, audioToneEnabled, audioDroneEnabled,
+#   audioNoiseEnabled, rampAudioBeat, masterTempoEnabled, masterTempoIndicator,
+#   all lock* booleans
+#
+# APPLIED-AT-END (snap with the rest of the phase, not interpolated)
+#   String and object fields: textLines, customFontName, bgImageUrl, and the
+#   entire `secondary` object (the second spiral's geometry/colors swap as a unit;
+#   only its secondaryOpacity glides, via MOTION). textLines and bgImageUrl snap
+#   at the START of the transition so the new text/background appears immediately.
 
 # ── SELF-CONTAINED PHASE FORMAT ──────────────────────────────────────────────
 # Each phase's `settings` is a plain nested JSON object and stands on its own.
 # Include the fields you want THIS phase to set; any field you omit takes its
-# DEFAULT value — it does NOT inherit from the previous phase. There is no
-# delta, no carry-over, no escaping.
+# DEFAULT value — it does NOT inherit from the previous phase. No delta, no
+# carry-over, no escaping.
 #
 # To keep a look or animate a value across phases, repeat the relevant fields in
 # every phase. A MOTION or COLOR field only glides during a transition if BOTH
 # the phase you leave and the phase you enter specify it — otherwise the missing
-# side is its default. (E.g. to fade color1 across two phases, set color1 in both.)
+# side is its default.
 #
 # Base-only fields (maxFps) and sequencer metadata (sequencerEnabled,
 # sequenceTitle, sequencerLoop) belong only at the top level — never in settings.
-
-# ── PHOTOSENSITIVITY NOTE ────────────────────────────────────────────────────
-# All users are presented with a full photosensitivity and hypnotic-effects
-# warning modal on first load, and must agree before entering the app.
-# Strobe, flash, and inversion effects are safe to include in generated
-# sequences without additional caveats.
-
-# ── MIX BOLDLY + USE MASTER TEMPO ────────────────────────────────────────────
-# Great sequences layer effects aggressively and let phases evolve dramatically:
-# shift spiralMath, swing direction, bring the Eyes effect in and out, deepen the
-# vignette, ramp the speed, and move audio bands across the journey. When a phase
-# runs more than one rhythmic effect (strobe, inversion, text, color cycling),
-# enable Master Tempo and lock them to a shared BPM so the whole scene pulses on
-# one beat — it is the most effective way to make a sequence feel intentional.
 
 # ── RUNNING A GENERATED SEQUENCE (tell the user) ─────────────────────────────
 # A pasted sequence does NOT auto-play. After importing the JSON, the user must:
@@ -125,7 +108,8 @@ OUTPUT CONSTRAINTS:
    want to persist or animate across phases.
 5. Do not put base-only fields (maxFps, sequencerEnabled, sequenceTitle,
    sequencerLoop) inside a phase's settings.
-6. Use spiralMath to choose the curve formula.
+6. Use spiralMath to choose the curve formula. Never emit archived fields
+   (spiralRenderMode, zoom*, the legacy grid-fragment fields). Omit highQuality.
 
 # ── EXAMPLE: Theta-band relaxation journey with audio and mirror eyes ───────
 # Each phase's `settings` is a real nested object and lists everything it needs.
@@ -181,6 +165,7 @@ OUTPUT CONSTRAINTS:
         "fragmentEnabled": true, "fragmentDirectionMode": "mirror",
         "fragmentPhaseOffset": 120, "eyeSpread": 50, "eyeSoftness": 65,
         "armTaper": 35,
+        "afterimageEnabled": true, "afterimageIntensity": 45, "afterimageDuration": 600,
         "vignetteEnabled": true, "vignetteIntensity": 80, "vignetteSize": 35, "vignetteSoftness": 70,
         "audioEnabled": true, "audioBeatMode": "binaural",
         "audioCarrierFreq": 220, "audioBeatFreq": 6,

@@ -3,7 +3,7 @@ import './ControlsPanel.css';
 import {
   AppState, TransitionType, SequencePhase, initialState,
   FragmentDirectionMode,
-  SpiralMath, RampMode, ColorMode, TextAnimation, VignetteShape,
+  SpiralMath, SpiralShape, LayerBlendMode, BgFillMode, RampMode, ColorMode, TextAnimation, TextMode, VignetteShape,
   AudioBeatMode, AudioWaveform, AudioDroneInterval, AudioNoiseType,
   TempoRatio,
 } from '../../types';
@@ -11,6 +11,9 @@ import { freqToNote, beatToBand } from '../../utils/audio';
 import { TEMPO_RATIOS, ratioLabel, tempoPeriodSec, tempoRateHz } from '../../utils/tempo';
 import { debugStore } from '../../utils/debugStore';
 import { BASE_ONLY, NON_SETTINGS, isPhaseSetting } from '../../utils/fields';
+
+// Displayed next to the title and reused for downloaded-file naming.
+export const APP_VERSION = 'v0.2.06092026';
 
 interface Props {
   state: AppState;
@@ -37,9 +40,12 @@ const InfoTip = ({ text }: { text: string }) => (
   </span>
 );
 
-const Slider = ({ label, value, min, max, step, onChange, unit = "", info }: {
+const Slider = ({ label, value, min, max, step, onChange, unit = "", info, disabled = false, uncap = false }: {
   label: string; value: number; min: number; max: number;
-  step: number; onChange: (v: number) => void; unit?: string; info?: string;
+  step: number; onChange: (v: number) => void; unit?: string; info?: string; disabled?: boolean;
+  // When true, the typed number box may exceed `max` (the drag track still stops
+  // at `max`). The lower bound is still enforced to avoid zero/negative values.
+  uncap?: boolean;
 }) => {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
@@ -49,11 +55,11 @@ const Slider = ({ label, value, min, max, step, onChange, unit = "", info }: {
   const commit = (raw: string) => {
     setEditing(false);
     const n = parseFloat(raw);
-    if (!isNaN(n)) onChange(Math.min(max, Math.max(min, n)));
+    if (!isNaN(n)) onChange(uncap ? Math.max(min, n) : Math.min(max, Math.max(min, n)));
   };
 
   return (
-    <div className="control-item">
+    <div className={`control-item${disabled ? ' control-item-disabled' : ''}`}>
       <div className="control-item-header">
         <span>{label}{info && <InfoTip text={info} />}</span>
         <div className="slider-num-wrap">
@@ -61,7 +67,8 @@ const Slider = ({ label, value, min, max, step, onChange, unit = "", info }: {
             type="number"
             className="slider-num-input"
             value={editing ? draft : displayVal}
-            min={min} max={max} step={step}
+            min={min} max={uncap ? undefined : max} step={step}
+            disabled={disabled}
             onFocus={() => { setEditing(true); setDraft(displayVal); }}
             onChange={e => setDraft(e.target.value)}
             onBlur={e => commit(e.target.value)}
@@ -77,6 +84,7 @@ const Slider = ({ label, value, min, max, step, onChange, unit = "", info }: {
         type="range"
         min={min} max={max} step={step}
         value={value}
+        disabled={disabled}
         onChange={e => onChange(parseFloat(e.target.value))}
       />
     </div>
@@ -148,8 +156,8 @@ function makeReset(keys: (keyof AppState)[], updateState: (p: Partial<AppState>)
 
 
 /** Public docs served from /public, viewable & downloadable in the Data tab. */
-const REFERENCE_DOCS = ['PRESET_KEYS.txt', 'PRESET_SCHEMA.txt', 'PRESET_TEMPLATE.json', 'SEQUENCE_SCHEMA.txt'] as const;
-const SKILL_DOCS     = ['SKILLv0.1.md', 'skillschemaV0.1.md'] as const;
+const REFERENCE_DOCS = ['PRESET_KEYS_v0.2.txt', 'PRESET_SCHEMA_v0.2.txt', 'PRESET_TEMPLATE_v0.2.json', 'SEQUENCE_SCHEMA_v0.2.txt'] as const;
+const SKILL_DOCS     = ['SKILL_v0.2.md', 'skillschema_v0.2.md'] as const;
 /** Resolve a public-folder path under the app's base URL (works in dev '/' and on
  *  GitHub Pages '/spiral-app/'). Encode in case a filename has spaces. */
 const docUrl = (filename: string) => `${import.meta.env.BASE_URL}${encodeURIComponent(filename)}`;
@@ -185,6 +193,13 @@ function extractJsonObjects(text: string): string[] {
 
 export const ControlsPanel: React.FC<Props> = ({ state, updateState, isOpen, toggle, currentPhaseIdx, editingPhaseIndex, onEditPhase, onExitPhaseEdit }) => {
   const [activeTab, setActiveTab] = useState<'settings' | 'sequencer' | 'data' | 'debug'>('settings');
+  // Sub-tab within the Controls tab: edit the primary spiral (+ all shared
+  // effects) or just the second spiral's own shape. Only shown when enabled.
+  const [spiralTab, setSpiralTab] = useState<'primary' | 'secondary'>('primary');
+
+  // Patch a field inside the nested `secondary` spiral object.
+  const updateSecondary = (partial: Partial<AppState['secondary']>) =>
+    updateState({ secondary: { ...state.secondary, ...partial } });
 
   const isEditingPhase = editingPhaseIndex !== null;
   const editingPhaseTitle = isEditingPhase ? state.sequencePhases[editingPhaseIndex]?.title : undefined;
@@ -311,6 +326,36 @@ export const ControlsPanel: React.FC<Props> = ({ state, updateState, isOpen, tog
       setCopyFeedback(true);
       setTimeout(() => setCopyFeedback(false), 1500);
     }
+  };
+
+  // Download the current export as a .json file the user can save / share.
+  const handleDownloadPreset = () => {
+    const blob = new Blob([exportString], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    a.download = `hypnoviz-preset-${stamp}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  // Load a .json file from the device straight into the import box for review/apply.
+  const importFileRef = useRef<HTMLInputElement>(null);
+  const handleUploadFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // allow re-selecting the same file later
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      setImportText(String(reader.result ?? ''));
+      setImportStatus('idle');
+      setImportHadSequence(false);
+      setImportWarning(null);
+    };
+    reader.readAsText(file);
   };
 
   const handleImport = () => {
@@ -501,8 +546,10 @@ export const ControlsPanel: React.FC<Props> = ({ state, updateState, isOpen, tog
 
   /* ── Per-group resets ─────────────────────────────────────── */
 
-  const resetVisuals    = makeReset(['mode','arms','turns','curve','width','spiralMath','maxFps','taperStrength','armTaper','cellFalloff','afterimageEnabled','afterimageIntensity','afterimageDuration'], updateState);
+  const resetVisuals    = makeReset(['mode','arms','turns','curve','width','spiralMath','shape','polygonSides','concentricTwist','maxFps','taperStrength','armTaper','cellFalloff','afterimageEnabled','afterimageIntensity','afterimageDuration','afterimageHold'], updateState);
   const resetCenterDot  = makeReset(['centerDotEnabled','centerDotRadius','centerDotColor'], updateState);
+  const resetSecondary  = makeReset(['secondaryEnabled','secondaryBlendMode','secondaryOpacity','secondary'], updateState);
+  const resetBackground = makeReset(['bgImageEnabled','bgImageUrl','bgImageFill','bgImageDim','bgImageBlur'], updateState);
   const resetMotion     = makeReset(['rotationSpeed','direction','wobble','wobblePhase','wobbleSpeed'], updateState);
   const resetZoom       = makeReset(['zoomEnabled','zoomSpeed','zoomDirection','zoomMin','zoomMax','zoomEasing','zoomMode','rampZoomSpeed'], updateState);
   const resetFragment   = makeReset([
@@ -521,6 +568,7 @@ export const ControlsPanel: React.FC<Props> = ({ state, updateState, isOpen, tog
     'textEnabled','textLines','textColor','randomOrder',
     'flashEnabled','flashColor','flashIntensity',
     'lineSpeed','lineTime','textSize','textAnimation',
+    'textMode','wpm','rsvpOrp','rsvpAnchor','wallOpacity','wallDensity','highlightColor','highlightSweepSpeed','customFontName',
   ], updateState);
   const resetStrobe     = makeReset(['intenseFlash','intenseStrobeDelay','strobeLength','strobeIntensity','strobeColorCount','strobeColor1','strobeColor2','strobeColor3'], updateState);
   const resetInversion  = makeReset(['inversionEnabled','inversionRate','inversionDuration','inversionIntensity','rampInversionSpeed'], updateState);
@@ -618,13 +666,118 @@ export const ControlsPanel: React.FC<Props> = ({ state, updateState, isOpen, tog
     return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}.${ds}`;
   };
 
+  /* ── Second spiral editor (its own sub-tab) ───────────────── */
+  const renderSecondaryEditor = () => {
+    const sec = state.secondary;
+    return (
+      <div className="control-group">
+        <GroupTitle title="Spiral 2 — Shape" onReset={resetSecondary} info="The second spiral has its own geometry, motion, and colours. All other effects (vignette, audio, text, tempo, hue) are shared with the primary spiral." />
+
+        {/* Geometry */}
+        <Slider label={sec.shape.startsWith('concentric') ? 'Rings' : 'Arms'} value={sec.arms} min={1} max={30} step={1} onChange={v => updateSecondary({ arms: v })} />
+        <Slider label="Turns"     value={sec.turns} min={0.1} max={10}  step={0.1} disabled={sec.shape.startsWith('concentric')} onChange={v => updateSecondary({ turns: v })} />
+        <Slider label="Curve"     value={sec.curve} min={0.1} max={10}  step={0.1} onChange={v => updateSecondary({ curve: v })} />
+        <Slider label="Thickness" value={sec.width} min={1}   max={100} step={1}   onChange={v => updateSecondary({ width: v })} />
+        <div className="control-item">
+          <label className="control-item-header">Spiral Math</label>
+          <select value={sec.spiralMath} onChange={e => updateSecondary({ spiralMath: e.target.value as SpiralMath })}>
+            <option value="power">Power Law</option>
+            <option value="log">Logarithmic</option>
+            <option value="archimedean">Archimedean</option>
+            <option value="fermat">Fermat</option>
+          </select>
+        </div>
+        <div className="control-item">
+          <label className="control-item-header">Shape</label>
+          <select value={sec.shape} onChange={e => updateSecondary({ shape: e.target.value as SpiralShape })}>
+            <option value="spiral">Spiral</option>
+            <option value="polygon">Polygon</option>
+            <option value="concentricCircle">Concentric Circles</option>
+            <option value="concentricPolygon">Concentric Polygons</option>
+          </select>
+        </div>
+        {(sec.shape === 'polygon' || sec.shape === 'concentricPolygon') && (
+          <Slider label="Polygon Sides" value={sec.polygonSides} min={3} max={12} step={1} onChange={v => updateSecondary({ polygonSides: v })} />
+        )}
+        {sec.shape === 'concentricPolygon' && (
+          <Slider label="Ring Twist" value={sec.concentricTwist} min={0} max={1} step={0.01} onChange={v => updateSecondary({ concentricTwist: v })} />
+        )}
+        <Slider label="Center Taper" value={sec.taperStrength} min={0} max={100} step={1} unit="%" onChange={v => updateSecondary({ taperStrength: v })} />
+        <Slider label="Arm Taper" value={sec.armTaper} min={0} max={100} step={1} unit="%" disabled={sec.shape !== 'spiral'} onChange={v => updateSecondary({ armTaper: v })} />
+
+        <div style={{ height: '1px', background: 'rgba(255,255,255,0.1)', margin: '0.5rem 0' }} />
+
+        {/* Motion */}
+        <Slider label="Spin Speed" value={sec.rotationSpeed} min={0} max={20} step={0.1} onChange={v => updateSecondary({ rotationSpeed: v })} />
+        <div className="control-item">
+          <label className="control-item-header">Direction</label>
+          <select value={sec.direction} onChange={e => updateSecondary({ direction: parseInt(e.target.value) as 1 | -1 })}>
+            <option value={1}>Outward</option>
+            <option value={-1}>Inward</option>
+          </select>
+        </div>
+        <Slider label="Wobble"    value={sec.wobble}      min={0} max={1}  step={0.01} onChange={v => updateSecondary({ wobble: v })} />
+        <Slider label="LFO Speed" value={sec.wobbleSpeed} min={0} max={20} step={0.1}  onChange={v => updateSecondary({ wobbleSpeed: v })} />
+        <label className="checkbox-item">
+          <input type="checkbox" checked={sec.ignoreRamp} onChange={e => updateSecondary({ ignoreRamp: e.target.checked })} />
+          Ignore speed ramp
+          <InfoTip text="When on, the second spiral spins at a constant rate, unaffected by the global Pulse speed ramp." />
+        </label>
+
+        <div style={{ height: '1px', background: 'rgba(255,255,255,0.1)', margin: '0.5rem 0' }} />
+
+        {/* Afterimage Bloom — independent from the primary spiral's bloom */}
+        <label className="checkbox-item">
+          <input type="checkbox" checked={sec.afterimageEnabled} onChange={e => updateSecondary({ afterimageEnabled: e.target.checked })} />
+          Afterimage Bloom
+          <InfoTip text="Gives the second spiral its own decaying motion trail, separate from the primary spiral's bloom." />
+        </label>
+        {sec.afterimageEnabled && (
+          <>
+            <Slider label="Bloom Intensity" value={sec.afterimageIntensity} min={0} max={100} step={1} unit="%" onChange={v => updateSecondary({ afterimageIntensity: v })} />
+            <Slider label="Bloom Duration"  value={sec.afterimageDuration}  min={50} max={2000} step={50} unit="ms" onChange={v => updateSecondary({ afterimageDuration: v })} />
+            <Slider label="Frame Hold"      value={sec.afterimageHold}      min={0} max={500} step={10} unit="ms" onChange={v => updateSecondary({ afterimageHold: v })} />
+          </>
+        )}
+
+        <div style={{ height: '1px', background: 'rgba(255,255,255,0.1)', margin: '0.5rem 0' }} />
+
+        {/* Colours */}
+        <div className="control-item">
+          <label className="control-item-header">Color Animation Mode</label>
+          <select value={sec.colorMode} onChange={e => updateSecondary({ colorMode: e.target.value as ColorMode })}>
+            <option value="default">Default (cycling gradient)</option>
+            <option value="static">Static on arm</option>
+            <option value="kaleidoscopic">Kaleidoscopic</option>
+          </select>
+        </div>
+        {sec.colorMode === 'kaleidoscopic' && (
+          <Slider label="Sectors" value={sec.kaleidoscopeSectors} min={1} max={16} step={1} onChange={v => updateSecondary({ kaleidoscopeSectors: v })} />
+        )}
+        <div className="control-item">
+          <label className="control-item-header">Palette</label>
+          <select value={sec.gradientType} onChange={e => updateSecondary({ gradientType: e.target.value as 'Single' | 'Two' | 'Three' })}>
+            <option value="Single">Solid</option>
+            <option value="Two">Duo</option>
+            <option value="Three">Triad</option>
+          </select>
+        </div>
+        <div className="control-item color-row">
+          <input type="color" value={sec.color1} onChange={e => updateSecondary({ color1: e.target.value })} />
+          {sec.gradientType !== 'Single' && <input type="color" value={sec.color2} onChange={e => updateSecondary({ color2: e.target.value })} />}
+          {sec.gradientType === 'Three'  && <input type="color" value={sec.color3} onChange={e => updateSecondary({ color3: e.target.value })} />}
+        </div>
+      </div>
+    );
+  };
+
   /* ── Render ───────────────────────────────────────────────── */
 
   return (
     <aside className={`controls-panel ${isOpen ? 'open' : 'closed'}`}>
       {/* ── Header ── */}
       <div className="controls-header">
-        <span>HypnoViz</span>
+        <span>HypnoViz<span style={{ fontSize: '0.58rem', fontWeight: 400, opacity: 0.4, marginLeft: '0.45rem', letterSpacing: '0.02em', verticalAlign: 'middle' }}>{APP_VERSION}</span></span>
         <div className="header-actions">
           <button
             className="header-icon-btn"
@@ -870,6 +1023,18 @@ export const ControlsPanel: React.FC<Props> = ({ state, updateState, isOpen, tog
         /* ══════════════ SETTINGS TAB ══════════════ */
         ) : activeTab === 'settings' ? (
           <>
+            {/* Spiral 1 / Spiral 2 sub-tabs (only when a second spiral exists) */}
+            {state.secondaryEnabled && (
+              <div className="spiral-subtabs">
+                <button className={`spiral-subtab ${spiralTab === 'primary' ? 'active' : ''}`} onClick={() => setSpiralTab('primary')}>Spiral 1 &amp; Effects</button>
+                <button className={`spiral-subtab ${spiralTab === 'secondary' ? 'active' : ''}`} onClick={() => setSpiralTab('secondary')}>Spiral 2</button>
+              </div>
+            )}
+
+            {(state.secondaryEnabled && spiralTab === 'secondary') ? (
+              renderSecondaryEditor()
+            ) : (
+            <>
             {/* ── Master Tempo ── */}
             <div className="control-group">
               <GroupTitle title="Master Tempo" onReset={resetMasterTempo} info="A single BPM clock that all locked effects follow in sync — converts independent layers into one coherent pulse." />
@@ -1035,8 +1200,10 @@ export const ControlsPanel: React.FC<Props> = ({ state, updateState, isOpen, tog
                   <option value={-1}>Inward</option>
                 </select>
               </div>
-              <Slider label="Arms"      value={state.arms}   min={1}   max={30}  step={1}   onChange={v => updateState({ arms: v })} />
-              <Slider label="Turns"     value={state.turns}  min={0.1} max={10}  step={0.1} onChange={v => updateState({ turns: v })} />
+              <Slider label={state.shape.startsWith('concentric') ? 'Rings' : 'Arms'} value={state.arms} min={1} max={30} step={1} onChange={v => updateState({ arms: v })}
+                info={state.shape.startsWith('concentric') ? 'Number of concentric rings.' : undefined} />
+              <Slider label="Turns"     value={state.turns}  min={0.1} max={10}  step={0.1} disabled={state.shape.startsWith('concentric')} onChange={v => updateState({ turns: v })}
+                info={state.shape.startsWith('concentric') ? 'Not used by concentric shapes (each ring is a single closed loop).' : undefined} />
               <Slider label="Curve"     value={state.curve}  min={0.1} max={10}  step={0.1} onChange={v => updateState({ curve: v })} />
               <Slider label="Thickness" value={state.width}  min={1}   max={100} step={1}   onChange={v => updateState({ width: v })} />
               <div className="control-item">
@@ -1059,6 +1226,29 @@ export const ControlsPanel: React.FC<Props> = ({ state, updateState, isOpen, tog
                   <option value="fermat">Fermat — denser arms toward the outside</option>
                 </select>
               </div>
+              <div className="control-item">
+                <label className="control-item-header">
+                  Shape
+                  <InfoTip text="Spiral & Polygon draw winding arms. The Concentric shapes draw nested filled bands (rings) — the Arms slider becomes the ring count and Turns is ignored." />
+                </label>
+                <select
+                  value={state.shape}
+                  onChange={e => updateState({ shape: e.target.value as SpiralShape })}
+                >
+                  <option value="spiral">Spiral — classic winding arms</option>
+                  <option value="polygon">Polygon — winding N-gon arms</option>
+                  <option value="concentricCircle">Concentric Circles — nested rings</option>
+                  <option value="concentricPolygon">Concentric Polygons — nested N-gons</option>
+                </select>
+              </div>
+              {(state.shape === 'polygon' || state.shape === 'concentricPolygon') && (
+                <Slider label="Polygon Sides" value={state.polygonSides} min={3} max={12} step={1} onChange={v => updateState({ polygonSides: v })}
+                  info="Number of sides on the polygon." />
+              )}
+              {state.shape === 'concentricPolygon' && (
+                <Slider label="Ring Twist" value={state.concentricTwist} min={0} max={1} step={0.01} onChange={v => updateState({ concentricTwist: v })}
+                  info="How much each ring rotates relative to adjacent rings, making polygon spin visible." />
+              )}
               {/* Spiral rendering uses a single filled-ribbon path. The spiralRenderMode
                   field is retained in state for saved-preset compatibility but no longer
                   selects between modes, so there is no UI control for it. */}
@@ -1071,7 +1261,8 @@ export const ControlsPanel: React.FC<Props> = ({ state, updateState, isOpen, tog
               <Slider label="Center Taper" value={state.taperStrength} min={0} max={100} step={1} unit="%" onChange={v => updateState({ taperStrength: v })}
                 info="How sharply arms thin toward the center. Higher = thinner, pointier core (helps on small/mobile screens); lower = fuller, rounder core (looks best on large desktop screens)." />
               <Slider label="Arm Taper"  value={state.armTaper} min={0}  max={100} step={1} unit="%" onChange={v => updateState({ armTaper: v })}
-                info="Fades out the outermost portion of each arm. Useful with the Eyes effect to hide arms that cross through the opposite eye." />
+                disabled={state.shape !== 'spiral'}
+                info="Fades out the outermost portion of each arm. Useful with the Eyes effect to hide arms that cross through the opposite eye. (Only available for the Spiral shape.)" />
               <label className="checkbox-item">
                 <input type="checkbox" checked={state.afterimageEnabled} onChange={e => updateState({ afterimageEnabled: e.target.checked })} />
                 Afterimage Bloom
@@ -1083,8 +1274,76 @@ export const ControlsPanel: React.FC<Props> = ({ state, updateState, isOpen, tog
                     info="How visible the accumulated ghost trail is when blended back in." />
                   <Slider label="Bloom Duration" value={state.afterimageDuration} min={50} max={2000} step={10} unit="ms" onChange={v => updateState({ afterimageDuration: v })}
                     info="Roughly how long it takes for the trail to fade out." />
+                  <Slider label="Frame Hold" value={state.afterimageHold} min={0} max={500} step={10} unit="ms" onChange={v => updateState({ afterimageHold: v })}
+                    info="Captures a new frame only this often, freezing the image in between for a stop-motion / hitched look. 0 = smooth (every frame)." />
                 </>
               )}
+            </div>
+
+            {/* ── Second Spiral ── */}
+            <div className="control-group">
+              <GroupTitle title="Second Spiral" onReset={resetSecondary} info="Overlays a second, independent spiral. Edit its shape, motion, and colours in the 'Spiral 2' tab that appears at the top when enabled." />
+              <label className="checkbox-item">
+                <input type="checkbox" checked={state.secondaryEnabled}
+                  onChange={e => { const on = e.target.checked; updateState({ secondaryEnabled: on }); if (!on) setSpiralTab('primary'); }} />
+                Enable Second Spiral
+              </label>
+              {state.secondaryEnabled && (<>
+                <div className="control-item">
+                  <label className="control-item-header">
+                    Blend Mode
+                    <InfoTip text="How the second spiral combines with the first. Screen/Lighten add light (good on black); Multiply darkens (good on white); Normal layers it opaquely." />
+                  </label>
+                  <select value={state.secondaryBlendMode} onChange={e => updateState({ secondaryBlendMode: e.target.value as LayerBlendMode })}>
+                    <option value="screen">Screen — additive (black bg)</option>
+                    <option value="lighten">Lighten — keep brightest</option>
+                    <option value="multiply">Multiply — subtractive (white bg)</option>
+                    <option value="normal">Normal — opaque overlay</option>
+                  </select>
+                </div>
+                <Slider label="Layer Opacity" value={state.secondaryOpacity} min={0} max={100} step={1} unit="%" onChange={v => updateState({ secondaryOpacity: v })}
+                  info="Overall opacity of the second spiral layer." />
+                <p style={{ fontSize: '0.72rem', color: '#888', margin: '0.2rem 0 0 0' }}>
+                  Switch to the <strong>Spiral 2</strong> tab above to edit its shape, motion, and colours.
+                </p>
+              </>)}
+            </div>
+
+            {/* ── Background ── */}
+            <div className="control-group">
+              <GroupTitle title="Background" onReset={resetBackground} info="Load an image by URL to sit behind the spiral. The spiral blends over it with the current Darken/Lighten compositing." />
+              <label className="checkbox-item">
+                <input type="checkbox" checked={state.bgImageEnabled} onChange={e => updateState({ bgImageEnabled: e.target.checked })} />
+                Background Image
+              </label>
+              {state.bgImageEnabled && (<>
+                <div className="control-item">
+                  <label className="control-item-header">
+                    Image URL
+                    <InfoTip text="Direct link to an image (https://…/image.jpg). Some hosts block hotlinking; if it doesn't appear, try a different direct image URL." />
+                  </label>
+                  <input
+                    type="text"
+                    value={state.bgImageUrl}
+                    onChange={e => updateState({ bgImageUrl: e.target.value })}
+                    placeholder="https://example.com/image.jpg"
+                  />
+                </div>
+                <div className="control-item">
+                  <label className="control-item-header">Fill Mode</label>
+                  <select value={state.bgImageFill} onChange={e => updateState({ bgImageFill: e.target.value as BgFillMode })}>
+                    <option value="cover">Cover — fill, crop overflow</option>
+                    <option value="contain">Contain — fit whole image</option>
+                    <option value="stretch">Stretch — fill, distort aspect</option>
+                    <option value="tile">Tile — repeat to fill</option>
+                    <option value="center">Center — actual size, centered</option>
+                  </select>
+                </div>
+                <Slider label="Dim" value={state.bgImageDim} min={0} max={100} step={1} unit="%" onChange={v => updateState({ bgImageDim: v })}
+                  info="Fades the image toward the background color so the spiral stays prominent (0 = full image, 100 = hidden)." />
+                <Slider label="Blur" value={state.bgImageBlur} min={0} max={10} step={0.5} unit="px" onChange={v => updateState({ bgImageBlur: v })}
+                  info="Softens the image for a dreamy backdrop. Subtle — 1–3 is a gentle haze; higher gets dreamier." />
+              </>)}
             </div>
 
             {/* ── Audio ── */}
@@ -1412,9 +1671,74 @@ export const ControlsPanel: React.FC<Props> = ({ state, updateState, isOpen, tog
               <div className="control-item">
                 <textarea value={state.textLines} onChange={e => updateState({ textLines: e.target.value })} placeholder="One phrase per line" />
               </div>
+
+              <div className="control-item">
+                <label className="control-item-header">
+                  Display Mode
+                  <InfoTip text="Phrase: one line at a time (classic). RSVP: one word at a time at a set words-per-minute. Wall: all phrases shown at once. Highlight: all words shown dimmed with a bright sweep moving through them." />
+                </label>
+                <select value={state.textMode} onChange={e => updateState({ textMode: e.target.value as TextMode })}>
+                  <option value="phrase">Phrase — one line at a time</option>
+                  <option value="rsvp">RSVP — one word at a time (WPM)</option>
+                  <option value="wall">Wall — all phrases at once</option>
+                  <option value="highlight">Highlight — sweeping word emphasis</option>
+                </select>
+              </div>
+
+              <div className="control-item">
+                <label className="control-item-header">
+                  Custom Font
+                  <InfoTip text="Google Fonts family name (e.g. 'Bebas Neue', 'Cinzel'). Leave blank for the default font. Loads the font from Google Fonts over the network." />
+                </label>
+                <input
+                  type="text"
+                  value={state.customFontName}
+                  onChange={e => updateState({ customFontName: e.target.value })}
+                  placeholder="e.g. Bebas Neue (blank = default)"
+                />
+              </div>
+
+              {state.textMode === 'rsvp' && (
+                <>
+                  <Slider label="Words / Min" value={state.wpm} min={60} max={700} step={10} onChange={v => updateState({ wpm: v })}
+                    info="RSVP pacing — how many words per minute are shown. 300 is a comfortable reading pace; higher trains faster recognition." />
+                  <label className="checkbox-item">
+                    <input type="checkbox" checked={state.rsvpOrp} onChange={e => updateState({ rsvpOrp: e.target.checked })} />
+                    ORP anchor letter
+                    <InfoTip text="Highlights the Optimal Recognition Point letter of each word (the trick speed-reading apps use) to steady the eye." />
+                  </label>
+                  <label className="checkbox-item">
+                    <input type="checkbox" checked={state.rsvpAnchor} disabled={!state.rsvpOrp} onChange={e => updateState({ rsvpAnchor: e.target.checked })} />
+                    Center anchor letter
+                    <InfoTip text="Pins the ORP letter to the centre of the screen so it doesn't shift as word lengths change. Off lets each word centre on its own midpoint." />
+                  </label>
+                </>
+              )}
+              {state.textMode === 'wall' && (
+                <>
+                  <Slider label="Density" value={state.wallDensity} min={40} max={600} step={10} onChange={v => updateState({ wallDensity: v })}
+                    info="How many words are packed into the wall — higher fills the frame more densely." />
+                  <Slider label="Phrase Opacity" value={state.wallOpacity} min={0} max={100} step={1} unit="%" onChange={v => updateState({ wallOpacity: v })}
+                    info="Per-phrase opacity for the static text wall." />
+                </>
+              )}
+              {state.textMode === 'highlight' && (
+                <>
+                  <Slider label="Sweep Speed" value={state.highlightSweepSpeed} min={0.5} max={12} step={0.5} unit="w/s" onChange={v => updateState({ highlightSweepSpeed: v })}
+                    info="How fast the highlight advances through the words, in words per second." />
+                  <Slider label="Dim Opacity" value={state.wallOpacity} min={0} max={100} step={1} unit="%" onChange={v => updateState({ wallOpacity: v })}
+                    info="Opacity of the un-highlighted (dimmed) words." />
+                  <div className="control-item color-row">
+                    <input type="color" value={state.highlightColor} onChange={e => updateState({ highlightColor: e.target.value })} title="Highlight Color" />
+                    <div style={{ fontSize: '0.7rem', color: '#888', alignSelf: 'center' }}>Highlight Color</div>
+                  </div>
+                </>
+              )}
+
               <label className="checkbox-item">
-                <input type="checkbox" checked={state.randomOrder} onChange={e => updateState({ randomOrder: e.target.checked })} />
+                <input type="checkbox" checked={state.randomOrder} onChange={e => updateState({ randomOrder: e.target.checked })} disabled={state.textMode !== 'phrase'} />
                 Random order (no repeats)
+                {state.textMode !== 'phrase' && <span style={{ fontSize: '0.65rem', color: '#777', marginLeft: '0.4rem' }}>(Phrase mode only)</span>}
               </label>
 
               <div style={{ height: '1px', background: 'rgba(255,255,255,0.1)', margin: '0.5rem 0' }} />
@@ -1429,9 +1753,9 @@ export const ControlsPanel: React.FC<Props> = ({ state, updateState, isOpen, tog
                 <div style={{ fontSize: '0.7rem', color: '#888', alignSelf: 'center' }}>Text Flash Color</div>
               </div>
 
-              <Slider label="Phrase Interval" value={state.lineSpeed} min={100} max={1000} step={50} unit="ms" onChange={v => updateState({ lineSpeed: v })} />
+              <Slider label="Phrase Interval" value={state.lineSpeed} min={50} max={5000} step={50} unit="ms" uncap onChange={v => updateState({ lineSpeed: v })} />
               <TempoLockBadge locked={state.lockText} ratio={state.lockTextRatio} derivedValue={`beat ${state.lockTextBeat}/${state.masterTempoBeats}`} />
-              <Slider label="Phrase Duration" value={state.lineTime}  min={100} max={1000} step={50} unit="ms" onChange={v => updateState({ lineTime: v })} />
+              <Slider label="Phrase Duration" value={state.lineTime}  min={50} max={5000} step={50} unit="ms" uncap onChange={v => updateState({ lineTime: v })} />
               <Slider label="Text Size"       value={state.textSize}  min={0.5} max={3}    step={0.1}         onChange={v => updateState({ textSize: v })} />
 
               <div className="control-item color-row">
@@ -1573,6 +1897,8 @@ export const ControlsPanel: React.FC<Props> = ({ state, updateState, isOpen, tog
                 <InfoTip text="Shows a real-time debug tab with internal animation values." />
               </label>
             </div>
+            </>
+            )}
           </>
 
         /* ══════════════ DEBUG TAB ══════════════ */
@@ -1713,6 +2039,9 @@ export const ControlsPanel: React.FC<Props> = ({ state, updateState, isOpen, tog
                     <><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Copy String</>
                   )}
                 </button>
+                <button className="action-btn secondary" onClick={handleDownloadPreset} title="Download this preset as a .json file">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Download JSON
+                </button>
               </div>
             </div>
 
@@ -1733,6 +2062,11 @@ export const ControlsPanel: React.FC<Props> = ({ state, updateState, isOpen, tog
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                     Apply Preset
                   </button>
+                  <button className="action-btn secondary" onClick={() => importFileRef.current?.click()} title="Load a .json file from your device into the box">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                    Upload JSON
+                  </button>
+                  <input ref={importFileRef} type="file" accept=".json,application/json" onChange={handleUploadFile} style={{ display: 'none' }} />
                   {importStatus === 'success' && <span className="status-msg success">✓ Preset loaded!</span>}
                   {importStatus === 'error'   && <span className="status-msg error">✗ No valid JSON found</span>}
                 </div>

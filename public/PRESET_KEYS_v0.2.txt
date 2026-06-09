@@ -1,15 +1,16 @@
-# HypnoVis Preset Keys — Quick Reference
-# Flat alphabetical list of every preset key, its type, valid range, and default.
-# For full descriptions and structural notes see PRESET_SCHEMA.txt.
-
+# HypnoVis Preset Keys — Quick Reference (v0.2)
+# Flat list of every preset key, its type, valid range, and default.
+# For full descriptions and structural notes see PRESET_SCHEMA_v0.2.txt.
+#
 # Format:  key  ·  type  ·  range  ·  default  ·  group
 #
 # BASE-ONLY fields (maxFps, plus sequencer metadata) live only at the top level
 # of a preset/sequence — never inside a phase's `settings` object.
+# All fields are optional; omit a key to keep its default.
 
 # ── Visual: Spiral ──────────────────────────────────────────────────────────
-arms                   · number   · 1 – 30                  · 6           · Visuals
-armTaper               · number   · 0 – 100 (%)             · 0           · Visuals
+arms                   · number   · 1 – 30                  · 6           · Visuals (rings, when shape is concentric)
+armTaper               · number   · 0 – 100 (%)             · 0           · Visuals (spiral shape only)
 curve                  · number   · 0.1 – 10                · 4.5         · Visuals
 direction              · 1 | -1   ·                         · -1          · Motion (1 outward, -1 inward)
 maxFps                 · number   · 1 – 240                 · 144         · Visuals (base-only: top level, not per-phase)
@@ -17,11 +18,33 @@ mode                   · enum     · "Darken" | "Lighten"    · "Darken"    · 
 rotationSpeed          · number   · 0 – 20                  · 1           · Motion
 spiralMath             · enum     · "power" | "log" |
                                     "archimedean" | "fermat" · "log"      · Visuals
-turns                  · number   · 0.1 – 10                · 3           · Visuals
+taperStrength          · number   · 0 – 100 (%)             · 85          · Visuals (Center Taper: core thickness; 0 = round, 100 = pointy)
+turns                  · number   · 0.1 – 10                · 3           · Visuals (ignored for concentric shapes)
 width                  · number   · 1 – 100                 · 50          · Visuals
 wobble                 · number   · 0 – 1                   · 0.1         · Motion
 wobblePhase            · number   · any                     · 0           · Motion
 wobbleSpeed            · number   · 0 – 20                  · 1           · Motion
+
+# ── Geometry ────────────────────────────────────────────────────────────────
+shape                  · enum     · "spiral" | "polygon" |
+                                    "concentricCircle" |
+                                    "concentricPolygon"      · "spiral"   · Geometry
+polygonSides           · number   · 3 – 12                  · 5           · Geometry (polygon / concentricPolygon)
+concentricTwist        · number   · 0 – 1                   · 0.6         · Geometry (concentricPolygon only; ring-to-ring rotation)
+
+# ── Afterimage Bloom ────────────────────────────────────────────────────────
+afterimageEnabled      · boolean  ·                         · false       · Bloom (decaying motion trail)
+afterimageIntensity    · number   · 0 – 100                 · 50          · Bloom (ghost opacity)
+afterimageDuration     · number   · 50 – 2000 (ms)          · 300         · Bloom (fade-out time)
+afterimageHold         · number   · 0 – 500 (ms)            · 0           · Bloom (0 = every frame; >0 = stop-motion hold)
+
+# ── Background Image ────────────────────────────────────────────────────────
+bgImageEnabled         · boolean  ·                         · false       · Background
+bgImageUrl             · string   · image URL               · ""          · Background
+bgImageFill            · enum     · "cover" | "contain" |
+                                    "stretch" | "tile" | "center" · "cover" · Background
+bgImageDim             · number   · 0 – 100 (%)             · 0           · Background (fade toward bg color)
+bgImageBlur            · number   · 0 – 10 (px)             · 0           · Background
 
 # ── Center Dot ──────────────────────────────────────────────────────────────
 centerDotColor         · hex      · "#rrggbb"               · "#ffffff"   · Center Dot
@@ -49,30 +72,38 @@ vignetteSize           · number   · 0 – 95                  · 50          �
 vignetteSoftness       · number   · 0 – 100                 · 60          · Vignette (low = hard ring, high = gradual)
 
 # ── Eyes ────────────────────────────────────────────────────────────────────
-# Renders two side-by-side spirals. Each eye is confined to its own soft radial
-# region so they stay distinct while still blending toward the middle.
+# Renders two side-by-side spirals, each confined to its own soft radial region.
 fragmentEnabled        · boolean  ·                         · false       · Eyes (master on/off)
 fragmentDirectionMode  · enum     · "uniform" | "alternating" |
                                     "mirror"                · "alternating" · Eyes
-                       #   uniform     = both eyes spin the same way
-                       #   alternating = eyes spin in opposite directions
-                       #   mirror      = opposite spin, but both pull in/out together
 fragmentPhaseOffset    · number   · 0 – 360 (°)             · 90          · Eyes (rotation offset between eyes)
 eyeSpread              · number   · 0 – 100 (%)             · 55          · Eyes (how far each eye reaches toward the other)
 eyeSoftness            · number   · 0 – 100 (%)             · 60          · Eyes (edge falloff softness)
 
 # ── Subliminal Text ─────────────────────────────────────────────────────────
-flashColor             · hex      · "#rrggbb"               · "#ffffff"   · Subliminal
-flashEnabled           · boolean  ·                         · false       · Subliminal
-flashIntensity         · number   · 0 – 100                 · 50          · Subliminal
-lineSpeed              · number   · 100 – 1000 (ms)         · 800         · Subliminal
-lineTime               · number   · 100 – 1000 (ms)         · 400         · Subliminal
-randomOrder            · boolean  ·                         · false       · Subliminal
-textAnimation          · enum     · "fade" | "flash" | "pulse" · "fade"   · Subliminal
-textColor              · hex      · "#rrggbb"               · "#ffffff"   · Subliminal
-textEnabled            · boolean  ·                         · false       · Subliminal
-textLines              · string   · "\n"-separated phrases  · "Relax\nLet go\nFocus\nBreathe" · Subliminal
-textSize               · number   · 0.5 – 3                 · 1           · Subliminal
+textEnabled            · boolean  ·                         · false       · Text
+textLines              · string   · "\n"-separated phrases  · "Relax\nLet go\nFocus\nBreathe" · Text
+textColor              · hex      · "#rrggbb"               · "#ffffff"   · Text
+textSize               · number   · 0.5 – 3                 · 1           · Text
+textAnimation          · enum     · "fade" | "flash" | "pulse" · "fade"   · Text (phrase mode)
+randomOrder            · boolean  ·                         · false       · Text (phrase mode only)
+lineSpeed              · number   · 50 – 5000 (ms, uncapped) · 800        · Text (interval between phrases; also wall regen)
+lineTime               · number   · 50 – 5000 (ms, uncapped) · 400        · Text (phrase on-screen duration)
+flashColor             · hex      · "#rrggbb"               · "#ffffff"   · Text (background flash on change)
+flashEnabled           · boolean  ·                         · false       · Text
+flashIntensity         · number   · 0 – 100                 · 50          · Text
+
+# ── Text Display Modes ──────────────────────────────────────────────────────
+textMode               · enum     · "phrase" | "rsvp" |
+                                    "wall" | "highlight"     · "phrase"   · Text
+customFontName         · string   · Google Fonts family ("" = app font) · "" · Text
+wpm                    · number   · 60 – 700                · 300         · Text (rsvp pacing, words/min)
+rsvpOrp                · boolean  ·                         · false       · Text (rsvp: highlight focal letter)
+rsvpAnchor             · boolean  ·                         · true        · Text (rsvp: pin focal letter to screen center)
+wallDensity            · number   · 40 – 600                · 200         · Text (wall: words packed in)
+wallOpacity            · number   · 0 – 100 (%)             · 35          · Text (wall phrase alpha / highlight dim)
+highlightColor         · hex      · "#rrggbb"               · "#ffdd00"   · Text (highlight sweep & rsvp focal letter)
+highlightSweepSpeed    · number   · 0.5 – 12 (words/sec)    · 3           · Text (highlight advance rate)
 
 # ── Independent Strobe ──────────────────────────────────────────────────────
 intenseFlash           · boolean  ·                         · false       · Strobe
@@ -89,6 +120,16 @@ inversionDuration      · number   · 0.05 – 2 (s)            · 0.08        �
 inversionEnabled       · boolean  ·                         · false       · Inversion
 inversionIntensity     · number   · 0 – 100                 · 100         · Inversion
 inversionRate          · number   · 0.1 – 10 (s)            · 2.0         · Inversion
+
+# ── Second Spiral ───────────────────────────────────────────────────────────
+# A full optional second spiral composited over the primary one. Its visual
+# fields live in the nested `secondary` object; global effects (text, audio,
+# vignette, tempo, hue) are shared and NOT duplicated. See PRESET_SCHEMA_v0.2.txt.
+secondaryEnabled       · boolean  ·                         · false       · Second Spiral (master on/off)
+secondaryBlendMode     · enum     · "screen" | "multiply" |
+                                    "lighten" | "normal"     · "screen"   · Second Spiral
+secondaryOpacity       · number   · 0 – 100 (%)             · 70          · Second Spiral
+secondary              · object   · nested visual fields    · see schema  · Second Spiral
 
 # ── Audio ───────────────────────────────────────────────────────────────────
 audioBeatFreq          · number   · 0.5 – 40 (Hz)           · 6           · Audio
@@ -118,7 +159,6 @@ pulseSpeed             · boolean  ·                         · false       · 
 rampAudioBeat          · boolean  ·                         · false       · Speed Ramp (capped at 40 Hz)
 rampColorSpeed         · boolean  ·                         · false       · Speed Ramp
 rampDuration           · number   · 1 – 60 (s)              · 30          · Speed Ramp
-rampFragmentPulse      · boolean  ·                         · false       · Speed Ramp
 rampInversionSpeed     · boolean  ·                         · false       · Speed Ramp
 rampMode               · enum     · "sawtooth" | "legacy"   · "sawtooth"  · Speed Ramp
 rampSpiralSpeed        · boolean  ·                         · false       · Speed Ramp
@@ -131,8 +171,8 @@ masterTempoBpm         · number   · 30 – 240 (BPM)          · 60          �
 masterTempoIndicator   · boolean  ·                         · true        · Master Tempo
 masterTempoBeats       · number   · 2 – 16                  · 4           · Master Tempo (beats per measure)
 #
-# Lock pairs — boolean + TempoRatio ("1/8"|"1/4"|"1/2"|"1"|"2"|"4"|"8")
-# Edge-triggered systems also have a lockXxxBeat field (1-indexed beat in measure)
+# Lock pairs — boolean + TempoRatio ("1/8"|"1/4"|"1/2"|"1"|"2"|"4"|"8").
+# Edge-triggered systems also carry a lockXxxBeat field (1-indexed beat in measure).
 lockColorCycling       · boolean  ·                         · false       · Master Tempo
 lockColorCyclingRatio  · TempoRatio ·                       · "1"         · Master Tempo
 lockHueRotate          · boolean  ·                         · false       · Master Tempo
@@ -159,6 +199,5 @@ debugEnabled           · boolean  · shows the Debug tab     · false       · 
 # ── Sequencer (metadata only — keep at top level, not inside a phase's settings) ────
 sequencerEnabled       · boolean  ·                         · false
 sequencerLoop          · boolean  ·                         · true
-sequencerPlaying       · boolean  · runtime, not in saved presets · false
 sequenceTitle          · string   ·                         · "My Sequence"
-sequencePhases         · array    · see SEQUENCE_SCHEMA.txt · []
+sequencePhases         · array    · see SEQUENCE_SCHEMA_v0.2.txt · []

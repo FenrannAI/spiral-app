@@ -258,6 +258,40 @@ kbd {
   gap: 0.4rem;
 }
 
+/* Greyed-out slider when a control doesn't apply to the current mode/shape. */
+.control-item-disabled {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+/* Spiral 1 / Spiral 2 sub-tabs (Controls tab, only with a second spiral). */
+.spiral-subtabs {
+  display: flex;
+  gap: 0.4rem;
+  margin-bottom: 0.6rem;
+}
+.spiral-subtab {
+  flex: 1;
+  padding: 0.5rem 0.6rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #aaa;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.spiral-subtab:hover {
+  background: rgba(255, 255, 255, 0.09);
+  color: #ddd;
+}
+.spiral-subtab.active {
+  color: #fff;
+  background: rgba(120, 140, 255, 0.22);
+  border-color: rgba(120, 140, 255, 0.6);
+}
+
 .control-item-header {
   display: flex;
   justify-content: space-between;
@@ -460,6 +494,7 @@ kbd {
 .import-footer {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 0.75rem;
 }
 
