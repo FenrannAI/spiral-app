@@ -972,22 +972,11 @@ export const SpiralCanvas: React.FC<{ state: AppState }> = ({ state }) => {
       s2Ctx.strokeStyle = buildGradient(s2Ctx, centerX, centerY, effectiveRadius, activeColors2, colorPhase);
       drawArms(s2Ctx, centerX, centerY, effectiveRadius, sec.width, rotation2Ref.current, secState, timeSec, 1.0, false, true);
 
-      // When the second spiral has its OWN bloom we DON'T composite it here — it
-      // is handled in its independent afterimage block below (which draws onto the
-      // visible canvas after the primary has fully resolved). Otherwise it folds
-      // into frameTarget as before (sharing the primary bloom if that's on).
-      if (!sec.afterimageEnabled) {
-        // Composite with the chosen blend + opacity. 'normal' → plain source-over;
-        // the others map directly to canvas blend ops.
-        const blendOp = state.secondaryBlendMode === 'normal'
-          ? 'source-over'
-          : (state.secondaryBlendMode as GlobalCompositeOperation);
-        frameTarget.globalCompositeOperation = blendOp;
-        frameTarget.globalAlpha = Math.min(1, Math.max(0, state.secondaryOpacity / 100));
-        frameTarget.drawImage(s2, 0, 0, logicalWidth, logicalHeight);
-        frameTarget.globalAlpha = 1;
-        frameTarget.globalCompositeOperation = 'source-over';
-      }
+      // The second spiral is composited onto the VISIBLE canvas after the primary
+      // fully resolves (see the two blocks below) — never into the primary's frame
+      // layer. This keeps the primary's Afterimage Bloom from sweeping the second
+      // spiral into the primary's trail; the second spiral only blooms if its own
+      // bloom is enabled. Here we just render it to its own offscreen layer (s2).
     }
 
     // ── Afterimage Bloom: feedback-buffer trail ──────────────────────────────
@@ -1046,10 +1035,13 @@ export const SpiralCanvas: React.FC<{ state: AppState }> = ({ state }) => {
         lastHoldRef.current = time;
       }
 
-      // 1) Crisp present (held) frame: background (image), then arms.
+      // 1) Crisp present: the LIVE current frame every tick, so the spiral arms
+      //    always stay smooth. Frame-hold deliberately does NOT apply here — it
+      //    only stops the trail deposits below (step 3), so the arms glide while
+      //    the trail behind them steps in a hitched, stop-motion texture.
       paintBackground(ctx);
       ctx.globalCompositeOperation = blend;
-      ctx.drawImage(held, 0, 0, logicalWidth, logicalHeight);
+      ctx.drawImage(frameLayer, 0, 0, logicalWidth, logicalHeight);
 
       // 2) Ghost: the existing (already-faded) trail of PAST arm positions.
       ctx.globalAlpha = intensity;
@@ -1068,6 +1060,22 @@ export const SpiralCanvas: React.FC<{ state: AppState }> = ({ state }) => {
       tCtx.globalCompositeOperation = 'source-over';
       tCtx.globalAlpha = 1;
       if (doCapture) tCtx.drawImage(held, 0, 0, logicalWidth, logicalHeight);
+    }
+
+    // ── Second spiral — crisp composite (no own bloom) ───────────────────────
+    // Composited onto the visible canvas AFTER the primary has fully resolved, so
+    // it is never part of the primary's bloom trail. (If the second spiral has its
+    // OWN bloom, it is handled by the block below instead.)
+    if (state.secondaryEnabled && secondaryLayerRef.current && !state.secondary.afterimageEnabled) {
+      const s2 = secondaryLayerRef.current;
+      const blendOp = state.secondaryBlendMode === 'normal'
+        ? 'source-over'
+        : (state.secondaryBlendMode as GlobalCompositeOperation);
+      ctx.globalCompositeOperation = blendOp;
+      ctx.globalAlpha = Math.min(1, Math.max(0, state.secondaryOpacity / 100));
+      ctx.drawImage(s2, 0, 0, logicalWidth, logicalHeight);
+      ctx.globalAlpha = 1;
+      ctx.globalCompositeOperation = 'source-over';
     }
 
     // ── Second spiral — independent Afterimage Bloom ─────────────────────────
@@ -1119,10 +1127,11 @@ export const SpiralCanvas: React.FC<{ state: AppState }> = ({ state }) => {
         secLastHoldRef.current = time;
       }
 
-      // 1) Crisp present (held) secondary frame.
+      // 1) Crisp present: the LIVE second-spiral frame every tick (s2), so its
+      //    arms stay smooth. Frame-hold only steps the trail deposits (step 3).
       ctx.globalCompositeOperation = blendOp2;
       ctx.globalAlpha = opacity2;
-      ctx.drawImage(held2, 0, 0, logicalWidth, logicalHeight);
+      ctx.drawImage(s2, 0, 0, logicalWidth, logicalHeight);
       // 2) Ghost: the decaying trail of past secondary positions.
       ctx.globalAlpha = opacity2 * intensity2;
       ctx.drawImage(trail2, 0, 0, logicalWidth, logicalHeight);

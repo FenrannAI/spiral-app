@@ -456,6 +456,12 @@ function App() {
           // Text lines + background image URL always snap (strings, no lerp).
           if ('textLines' in toState) interpolated.textLines = toState.textLines;
           if ('bgImageUrl' in toState) interpolated.bgImageUrl = toState.bgImageUrl;
+          // The second spiral's nested object isn't interpolated field-by-field;
+          // snap it at the START of the transition (like textLines) so the second
+          // spiral uses the INCOMING phase's params during the transition instead
+          // of the previous phase's — otherwise it can look correct mid-transition
+          // and then change/vanish the instant the transition completes.
+          if ('secondary' in toState) interpolated.secondary = toState.secondary;
 
           updateState(interpolated);
 
